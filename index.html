@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Volleyball run & court booking</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ["DM Sans", "system-ui", "sans-serif"],
+            },
+          },
+        },
+      };
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="min-h-screen bg-slate-950 font-sans text-slate-100 antialiased">
+    <div class="flex min-h-screen">
+      <aside
+        id="sidebar"
+        class="flex w-56 shrink-0 flex-col border-r border-slate-800 bg-slate-900 transition-[width,margin,opacity] duration-300 ease-out"
+        aria-label="Main navigation"
+      >
+        <div class="flex h-14 items-center gap-2 border-b border-slate-800 px-4">
+          <span
+            class="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/15 text-sm font-bold text-emerald-400"
+            >VB</span
+          >
+          <span class="truncate text-sm font-semibold tracking-tight">Runs</span>
+        </div>
+        <nav class="flex flex-1 flex-col gap-1 p-3">
+          <a
+            href="/"
+            data-nav="home"
+            class="rounded-lg bg-slate-800/80 px-3 py-2 text-sm font-medium text-white"
+            >Home</a
+          >
+          <a
+            href="/?join"
+            data-nav="join"
+            class="rounded-lg px-3 py-2 text-sm text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
+            >Join a run</a
+          >
+          <a
+            href="/"
+            data-nav="runs"
+            class="hidden rounded-lg px-3 py-2 text-sm text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
+            >My runs</a
+          >
+          <a
+            href="/?account"
+            data-nav="account"
+            class="rounded-lg px-3 py-2 text-sm text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
+            >Account</a
+          >
+        </nav>
+        <p id="account-label" class="border-t border-slate-800 px-4 py-3 text-xs text-slate-500">
+          Guest
+        </p>
+      </aside>
+
+      <div class="flex min-w-0 flex-1 flex-col">
+        <header
+          class="flex h-14 items-center gap-3 border-b border-slate-800 bg-slate-900/80 px-4 backdrop-blur"
+        >
+          <button
+            type="button"
+            id="menu-toggle"
+            class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 bg-slate-800 text-slate-200 transition hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+            aria-controls="sidebar"
+            aria-expanded="true"
+            title="Toggle menu"
+          >
+            <span class="sr-only">Toggle sidebar</span>
+            <svg
+              id="icon-open"
+              class="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M4 6h16M4 12h16M4 18h16"
+              />
+            </svg>
+            <svg
+              id="icon-close"
+              class="hidden h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
+          <span class="text-sm font-medium text-slate-300">Volleyball runs</span>
+        </header>
+
+        <main
+          class="flex min-h-0 w-full min-w-0 flex-1 flex-col px-0 py-0"
+          id="app-root"
+        ></main>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        var sidebar = document.getElementById("sidebar");
+        var toggle = document.getElementById("menu-toggle");
+        var iconOpen = document.getElementById("icon-open");
+        var iconClose = document.getElementById("icon-close");
+        var expanded = true;
+
+        function setExpanded(next) {
+          expanded = next;
+          if (expanded) {
+            sidebar.classList.remove("w-0", "min-w-0", "overflow-hidden", "border-0", "opacity-0");
+            sidebar.classList.add("w-56");
+            sidebar.setAttribute("aria-hidden", "false");
+            toggle.setAttribute("aria-expanded", "true");
+            iconOpen.classList.add("hidden");
+            iconClose.classList.remove("hidden");
+          } else {
+            sidebar.classList.add("w-0", "min-w-0", "overflow-hidden", "border-0", "opacity-0");
+            sidebar.classList.remove("w-56");
+            sidebar.setAttribute("aria-hidden", "true");
+            toggle.setAttribute("aria-expanded", "false");
+            iconOpen.classList.remove("hidden");
+            iconClose.classList.add("hidden");
+          }
+        }
+
+        toggle.addEventListener("click", function () {
+          setExpanded(!expanded);
+        });
+      })();
+    </script>
+    <script type="module" src="/js/main.js"></script>
+  </body>
+</html>

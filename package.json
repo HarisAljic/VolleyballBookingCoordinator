@@ -1,0 +1,29 @@
+{
+  "name": "volleyball-court-booking",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Volleyball run coordination with Skedda court checks",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "dev:ngrok": "TRUST_PROXY=1 node --watch server/index.js",
+    "seed:demo": "node server/seed-demo-run.mjs",
+    "seed:demo18": "node server/seed-demo-18.mjs",
+    "seed:overlap18": "node server/seed-overlap-18.mjs",
+    "seed:waitlist": "node server/seed-waitlist-demo.mjs",
+    "kick:bench": "node server/kick-bench-waitlist-demo.mjs",
+    "db:reset": "node server/reset-db.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.7.0",
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.2",
+    "nanoid": "^5.0.9",
+    "playwright": "^1.49.1"
+  }
+}

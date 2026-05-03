@@ -15,13 +15,32 @@ export async function renderHome() {
     } catch {
       runs = [];
     }
+    const statusCell = (r) => {
+      const chips = [];
+      if (r.runFound) {
+        chips.push(
+          '<span class="inline-flex whitespace-nowrap rounded-full border border-emerald-500/60 bg-emerald-950/90 px-2 py-0.5 text-[11px] font-medium leading-tight text-emerald-100">Run found</span>'
+        );
+      }
+      if (r.acceptingPlayers) {
+        chips.push(
+          '<span class="inline-flex whitespace-nowrap rounded-full border border-sky-500/80 bg-sky-900 px-2 py-0.5 text-[11px] font-medium leading-tight text-sky-100 shadow-inner shadow-sky-950/30">Accepting players</span>'
+        );
+      }
+      const inner =
+        chips.length > 0
+          ? `<span class="flex flex-wrap items-center gap-1.5">${chips.join("")}</span>`
+          : '<span class="text-slate-600">—</span>';
+      return inner;
+    };
     const rows = runs
       .map(
         (r) => `
-        <tr class="border-b border-slate-800">
-          <td class="py-3 pr-4 font-medium text-slate-200">${escapeHtml(r.title)}</td>
-          <td class="py-3 pr-4 text-slate-400">${r.member_count}/${r.capacity}</td>
-          <td class="py-3 text-right">
+        <tr>
+          <td class="px-4 py-3 align-middle font-medium text-slate-200">${escapeHtml(r.title)}</td>
+          <td class="px-4 py-3 align-middle tabular-nums text-slate-400">${r.member_count}/${r.capacity}</td>
+          <td class="px-4 py-3 align-middle">${statusCell(r)}</td>
+          <td class="px-4 py-3 align-middle text-right">
             <a class="text-emerald-400 hover:text-emerald-300" href="${escapeHtml(r.publicUrl || "#")}">Open run</a>
           </td>
         </tr>`
@@ -57,15 +76,16 @@ export async function renderHome() {
           </form>
         </div>
         <div class="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
-          <table class="w-full text-left text-sm">
-            <thead class="bg-slate-800/50 text-xs uppercase tracking-wide text-slate-500">
+          <table class="w-full border-collapse text-left text-sm">
+            <thead class="border-b border-slate-800 bg-slate-800/50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
-                <th class="px-4 py-3 font-medium">Run</th>
-                <th class="px-4 py-3 font-medium">Roster</th>
-                <th class="px-4 py-3 font-medium text-right">Link</th>
+                <th scope="col" class="px-4 py-3 align-middle font-medium">Run</th>
+                <th scope="col" class="px-4 py-3 align-middle font-medium">Roster</th>
+                <th scope="col" class="px-4 py-3 align-middle font-medium">Status</th>
+                <th scope="col" class="px-4 py-3 align-middle text-right font-medium">Link</th>
               </tr>
             </thead>
-            <tbody>${rows || `<tr><td colspan="3" class="px-4 py-6 text-slate-500">No runs yet.</td></tr>`}</tbody>
+            <tbody class="divide-y divide-slate-800">${rows || `<tr><td colspan="4" class="px-4 py-6 text-slate-500">No runs yet.</td></tr>`}</tbody>
           </table>
         </div>`,
       { variant: "app" }

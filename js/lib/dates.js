@@ -207,6 +207,7 @@ export function computeDisplayLockCount(run, selected) {
   const base = Number(run.membersWithAvailability) || 0;
   const hadSaved = Array.isArray(run.viewerSlots) && run.viewerSlots.length > 0;
   const active =
+    run.viewerCanSetAvailability ??
     run.viewerIsActiveRoster ??
     (run.viewerIsMember && !run.viewerOnWaitlist);
   if (active && !hadSaved && selected.size > 0) return base + 1;

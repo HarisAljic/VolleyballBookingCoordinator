@@ -5,8 +5,15 @@ import cookieParser from "cookie-parser";
 import bcrypt from "bcryptjs";
 import { nanoid, customAlphabet } from "nanoid";
 import { openDb } from "./db.js";
+import {
+  computeBookingWindowCandidates,
+  groupBookingRentalsByStart,
+  splitViewerRentalMatchByWaitlist,
+  viewerMatchedRentalOptionNumbers as computeViewerMatchedRentalNumbers,
+} from "./booking-candidates.js";
 import { checkSkeddaVenues } from "./courtChecker.js";
 import {
+  dateFromSlotKey,
   firstFutureSlotKey,
   normalizeSlotKey,
   slotKeyFromParts,
@@ -126,7 +133,7 @@ function listMembers(runId) {
       `SELECT u.id, u.first_name, u.last_name
        FROM run_members m JOIN users u ON u.id = m.user_id
        WHERE m.run_id = ?
-       ORDER BY m.joined_at ASC`
+       ORDER BY m.joined_at ASC, m.rowid ASC`
     )
     .all(runId);
 }
@@ -142,7 +149,7 @@ function userInRun(runId, userId) {
 function orderedMemberUserIds(runId) {
   return db
     .prepare(
-      `SELECT user_id FROM run_members WHERE run_id = ? ORDER BY joined_at ASC`
+      `SELECT user_id FROM run_members WHERE run_id = ? ORDER BY joined_at ASC, rowid ASC`
     )
     .all(runId)
     .map((r) => Number(r.user_id));
@@ -152,17 +159,11 @@ function activeRosterUserIds(runId, capacity) {
   return orderedMemberUserIds(runId).slice(0, capacity);
 }
 
-function isActiveRosterMember(runId, userId, capacity) {
-  const ids = orderedMemberUserIds(runId);
-  const idx = ids.indexOf(Number(userId));
-  return idx >= 0 && idx < capacity;
-}
-
-function intersectionSlots(runId, capacity) {
-  const activeIds = activeRosterUserIds(runId, capacity);
-  if (activeIds.length < capacity) return [];
+/** Intersection of saved hourly slots for exactly these users (order preserved for first-id tie-break only). */
+function intersectionSlotsForUserIds(runId, userIds) {
+  if (!userIds.length) return [];
   const sets = [];
-  for (const uid of activeIds) {
+  for (const uid of userIds) {
     const row = db
       .prepare(
         "SELECT slots_json FROM availability WHERE run_id = ? AND user_id = ?"
@@ -186,6 +187,234 @@ function intersectionSlots(runId, capacity) {
     acc = new Set([...acc].filter((x) => sets[i].has(x)));
   }
   return [...acc].sort();
+}
+
+function intersectionSlots(runId, capacity) {
+  const activeIds = activeRosterUserIds(runId, capacity);
+  if (activeIds.length < capacity) return [];
+  return intersectionSlotsForUserIds(runId, activeIds);
+}
+
+function memberHasNonEmptyAvailability(runId, userId) {
+  const row = db
+    .prepare(
+      "SELECT slots_json FROM availability WHERE run_id = ? AND user_id = ?"
+    )
+    .get(runId, userId);
+  if (!row) return false;
+  try {
+    const arr = JSON.parse(row.slots_json || "[]");
+    return Array.isArray(arr) && arr.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Home /runs/mine badges: enough calendars saved vs still recruiting or no common hour.
+ */
+function homeRunListBadgeFlags(runId, capacity) {
+  const cap = Math.max(1, Number(capacity)) || 12;
+  const orderedIds = orderedMemberUserIds(runId);
+  const count = orderedIds.length;
+  let membersWithAnySave = 0;
+  for (const uid of orderedIds) {
+    if (memberHasNonEmptyAvailability(runId, uid)) membersWithAnySave++;
+  }
+  const runFound = membersWithAnySave >= cap;
+  const fullRoster = count >= cap;
+  const idsForOverlap = fullRoster ? orderedIds.slice(0, cap) : orderedIds;
+  const overlap =
+    idsForOverlap.length > 0
+      ? intersectionSlotsForUserIds(runId, idsForOverlap)
+      : [];
+  const noSharedWindow = idsForOverlap.length > 0 && overlap.length === 0;
+  /** Mutually exclusive with runFound: only show one home-list indicator. */
+  const acceptingPlayers =
+    !runFound && (count < cap || noSharedWindow);
+  return { runFound, acceptingPlayers };
+}
+
+/** Maximal runs of consecutive wall-clock hours in sorted overlap keys. */
+function contiguousOverlapRuns(sortedOverlapKeys) {
+  const keys = [...(sortedOverlapKeys || [])]
+    .map((x) => normalizeSlotKey(String(x)))
+    .filter(Boolean)
+    .sort();
+  const runs = [];
+  let cur = [];
+  for (const k of keys) {
+    if (!cur.length) {
+      cur.push(k);
+      continue;
+    }
+    const prevT = dateFromSlotKey(cur[cur.length - 1]);
+    const curT = dateFromSlotKey(k);
+    if (
+      prevT &&
+      curT &&
+      !Number.isNaN(prevT.getTime()) &&
+      !Number.isNaN(curT.getTime()) &&
+      curT.getTime() - prevT.getTime() === 3600000
+    ) {
+      cur.push(k);
+    } else {
+      runs.push(cur);
+      cur = [k];
+    }
+  }
+  if (cur.length) runs.push(cur);
+  return runs;
+}
+
+/** True if intersection includes any contiguous 2h+ block (same definition as 2/3/4h booking tiles). */
+function hasSharedBookableContiguousWindow(sortedOverlapKeys) {
+  return contiguousOverlapRuns(sortedOverlapKeys).some((r) => r.length >= 2);
+}
+
+/**
+ * When more than `capacity` people have joined, we only lock extras’ calendars
+ * after everyone’s availability intersects in a contiguous 2+ hour window.
+ * Until then, all members may save availability.
+ */
+function schedulingWaitlistLocked(runId, capacity) {
+  const count = memberCount(runId);
+  if (count <= capacity) return false;
+  const allIds = orderedMemberUserIds(runId);
+  const overlapAll = intersectionSlotsForUserIds(runId, allIds);
+  return hasSharedBookableContiguousWindow(overlapAll);
+}
+
+function canSetAvailability(runId, userId, capacity) {
+  const ids = orderedMemberUserIds(runId);
+  const idx = ids.indexOf(Number(userId));
+  if (idx < 0) return false;
+  if (idx < capacity) return true;
+  return !schedulingWaitlistLocked(runId, capacity);
+}
+
+/**
+ * Among members with non-empty saved slots, order by first save time
+ * (first_saved_at, then updated_at, then user_id).
+ */
+function userIdsWithAvailabilityOrderedBySaveTime(runId) {
+  const rows = db
+    .prepare(
+      `SELECT user_id, slots_json, updated_at,
+        COALESCE(NULLIF(TRIM(first_saved_at), ''), updated_at) AS sort_ts
+       FROM availability WHERE run_id = ?`
+    )
+    .all(runId);
+  const items = [];
+  for (const row of rows) {
+    try {
+      const arr = JSON.parse(row.slots_json || "[]");
+      if (!Array.isArray(arr) || arr.length === 0) continue;
+      items.push({
+        userId: Number(row.user_id),
+        sortTs: String(row.sort_ts || ""),
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+  items.sort((a, b) => {
+    const t = a.sortTs.localeCompare(b.sortTs);
+    if (t !== 0) return t;
+    return a.userId - b.userId;
+  });
+  return items.map((x) => x.userId);
+}
+
+function loadOrderedAvailabilitySlots(runId) {
+  const orderedUids = userIdsWithAvailabilityOrderedBySaveTime(runId);
+  if (!orderedUids.length) {
+    return { orderedUids: [], slotsByUser: new Map() };
+  }
+  const placeholders = orderedUids.map(() => "?").join(",");
+  const rows = db
+    .prepare(
+      `SELECT user_id, slots_json FROM availability WHERE run_id = ? AND user_id IN (${placeholders})`
+    )
+    .all(runId, ...orderedUids);
+  const slotsByUser = new Map();
+  for (const r of rows) {
+    try {
+      const raw = JSON.parse(r.slots_json || "[]");
+      const slots = Array.isArray(raw)
+        ? [
+            ...new Set(
+              raw
+                .map((s) => normalizeSlotKey(String(s)))
+                .filter(Boolean)
+            ),
+          ]
+        : [];
+      slotsByUser.set(Number(r.user_id), slots);
+    } catch {
+      slotsByUser.set(Number(r.user_id), []);
+    }
+  }
+  return { orderedUids, slotsByUser };
+}
+
+/** Per-slot counts from everyone who saves before `userId` in first-save-time order. */
+function slotCountsBeforeUserInSaveOrder(runId, userId) {
+  const { orderedUids, slotsByUser } = loadOrderedAvailabilitySlots(runId);
+  const slotCounts = new Map();
+  for (const uid of orderedUids) {
+    if (Number(uid) === Number(userId)) return slotCounts;
+    const slots = slotsByUser.get(uid) || [];
+    for (const k of slots) {
+      slotCounts.set(k, (slotCounts.get(k) || 0) + 1);
+    }
+  }
+  return slotCounts;
+}
+
+/**
+ * In save-time order, count prior savers per hour. Someone is waitlisted only
+ * when every hour they save already has a full roster (`rosterCapacity`) of
+ * prior savers on that same hour — i.e. they would be the (capacity+1)th on
+ * that whole selection, matching “full at cap people, waitlist at cap+1” for
+ * multi-hour windows (not the first hour hitting cap while another is still sparse).
+ */
+function waitlistBySaturatedHourSimulation(runId, rosterCapacity) {
+  const { orderedUids, slotsByUser } = loadOrderedAvailabilitySlots(runId);
+  if (!orderedUids.length) {
+    return {
+      waitlistedIds: new Set(),
+      waitlistRankByUserId: new Map(),
+      waitlistCount: 0,
+    };
+  }
+  const capN = Math.max(1, Number(rosterCapacity)) || 1;
+  const slotCounts = new Map();
+  const waitlistedIds = new Set();
+  const waitlistOrder = [];
+  for (const uid of orderedUids) {
+    const slots = slotsByUser.get(uid) || [];
+    if (!slots.length) continue;
+    const hitsSaturatedHour = slots.every(
+      (k) => (slotCounts.get(k) || 0) >= capN
+    );
+    if (hitsSaturatedHour) {
+      waitlistedIds.add(uid);
+      waitlistOrder.push(uid);
+    }
+    for (const k of slots) {
+      slotCounts.set(k, (slotCounts.get(k) || 0) + 1);
+    }
+  }
+  const waitlistRankByUserId = new Map();
+  waitlistOrder.forEach((uid, i) => {
+    waitlistRankByUserId.set(uid, i + 1);
+  });
+  return {
+    waitlistedIds,
+    waitlistRankByUserId,
+    waitlistCount: waitlistedIds.size,
+  };
 }
 
 app.disable("x-powered-by");
@@ -349,6 +578,12 @@ app.get("/api/runs/mine", requireAuth, (req, res) => {
     .all(req.user.id, req.user.id);
   for (const r of rows) {
     r.publicUrl = `/?run=${encodeURIComponent(r.share_token)}`;
+    const { runFound, acceptingPlayers } = homeRunListBadgeFlags(
+      r.id,
+      r.capacity
+    );
+    r.runFound = runFound;
+    r.acceptingPlayers = acceptingPlayers;
   }
   res.json({ runs: rows });
 });
@@ -392,11 +627,14 @@ app.get("/api/runs/public/:token", (req, res) => {
   const mine = user ? userInRun(run.id, user.id) : false;
   const myIndex =
     user && mine ? orderedIds.indexOf(Number(user.id)) : -1;
-  const viewerOnWaitlist = mine && myIndex >= cap;
+  const wlLocked = schedulingWaitlistLocked(run.id, cap);
+  const viewerOnWaitlist = mine && myIndex >= cap && wlLocked;
   const viewerIsActiveRoster = mine && myIndex >= 0 && myIndex < cap;
+  const viewerCanSetAvailability =
+    mine && canSetAvailability(run.id, user.id, cap);
 
   let mySlots = [];
-  if (user && mine && viewerIsActiveRoster) {
+  if (user && mine) {
     const a = db
       .prepare(
         "SELECT slots_json FROM availability WHERE run_id = ? AND user_id = ?"
@@ -414,12 +652,27 @@ app.get("/api/runs/public/:token", (req, res) => {
     }
   }
   const full = count >= cap;
-  const overlap = full ? intersectionSlots(run.id, cap) : [];
+  const {
+    waitlistedIds,
+    waitlistRankByUserId,
+    waitlistCount,
+  } = waitlistBySaturatedHourSimulation(run.id, cap);
+  let overlap = [];
+  if (count >= cap) {
+    const overlapUserIds = wlLocked
+      ? activeRosterUserIds(run.id, cap)
+      : orderedIds;
+    if (wlLocked && overlapUserIds.length >= cap) {
+      overlap = intersectionSlotsForUserIds(run.id, overlapUserIds);
+    } else if (!wlLocked && overlapUserIds.length > 0) {
+      overlap = intersectionSlotsForUserIds(run.id, overlapUserIds);
+    }
+  }
 
-  const activeIds = activeRosterUserIds(run.id, cap);
+  const heatmapUserIds = orderedIds;
   let avRows = [];
-  if (activeIds.length > 0) {
-    const placeholders = activeIds.map(() => "?").join(",");
+  if (heatmapUserIds.length > 0) {
+    const placeholders = heatmapUserIds.map(() => "?").join(",");
     avRows = db
       .prepare(
         `SELECT a.user_id, a.slots_json, u.first_name, u.last_name
@@ -427,11 +680,11 @@ app.get("/api/runs/public/:token", (req, res) => {
          JOIN users u ON u.id = a.user_id
          WHERE a.run_id = ? AND a.user_id IN (${placeholders})`
       )
-      .all(run.id, ...activeIds);
+      .all(run.id, ...heatmapUserIds);
     avRows.sort(
       (a, b) =>
-        activeIds.indexOf(Number(a.user_id)) -
-        activeIds.indexOf(Number(b.user_id))
+        heatmapUserIds.indexOf(Number(a.user_id)) -
+        heatmapUserIds.indexOf(Number(b.user_id))
     );
   }
 
@@ -453,13 +706,58 @@ app.get("/api/runs/public/:token", (req, res) => {
     };
   });
 
+  const countIdsForLock = wlLocked
+    ? activeRosterUserIds(run.id, cap)
+    : orderedIds;
   let membersWithAvailability = 0;
-  for (const m of memberAvailability) {
-    if (m.slots.length > 0) membersWithAvailability++;
+  for (const uid of countIdsForLock) {
+    const row = db
+      .prepare(
+        "SELECT slots_json FROM availability WHERE run_id = ? AND user_id = ?"
+      )
+      .get(run.id, uid);
+    if (!row) continue;
+    try {
+      const arr = JSON.parse(row.slots_json || "[]");
+      if (Array.isArray(arr) && arr.length > 0) membersWithAvailability++;
+    } catch {
+      /* ignore */
+    }
   }
 
   const activeRosterCount = Math.min(count, cap);
-  const waitlistCount = Math.max(0, count - cap);
+
+  /** Coalition coverage: extras count while scheduling is open (!wlLocked); after lock only first-cap roster. */
+  const bookingCandidateUserIds = wlLocked
+    ? activeRosterUserIds(run.id, cap)
+    : orderedIds;
+  let bookingWindowCandidates = [];
+  if (count >= 2 && bookingCandidateUserIds.length > 0) {
+    bookingWindowCandidates = computeBookingWindowCandidates(db, run.id, {
+      rosterUserIdsBooking: bookingCandidateUserIds,
+      rosterCapacity: cap,
+      dateStartStr: run.date_start,
+      dateEndStr: run.date_end,
+    });
+  }
+  const bookingRentalGroups = groupBookingRentalsByStart(bookingWindowCandidates);
+  const viewerMatchedRentalOptionNums =
+    mine && mySlots.length > 0
+      ? computeViewerMatchedRentalNumbers(mySlots, bookingRentalGroups)
+      : [];
+  let viewerWaitlistedRentalOptionNums = [];
+  let viewerFitsRentalOptionNums = [];
+  if (mine && user && mySlots.length > 0 && bookingRentalGroups.length > 0) {
+    const countsBefore = slotCountsBeforeUserInSaveOrder(run.id, user.id);
+    const split = splitViewerRentalMatchByWaitlist(
+      mySlots,
+      bookingRentalGroups,
+      countsBefore,
+      cap
+    );
+    viewerWaitlistedRentalOptionNums = split.waitlisted;
+    viewerFitsRentalOptionNums = split.fits;
+  }
 
   const payload = {
     id: run.id,
@@ -471,23 +769,36 @@ app.get("/api/runs/public/:token", (req, res) => {
     memberCount: count,
     activeRosterCount,
     waitlistCount,
+    schedulingWaitlistActive: wlLocked,
     isFull: full,
-    members: members.map((m, idx) => ({
-      id: Number(m.id),
-      firstName: m.first_name,
-      lastName: m.last_name,
-      waitlisted: idx >= cap,
-      waitlistRank: idx >= cap ? idx - cap + 1 : null,
-    })),
+    members: members.map((m) => {
+      const uid = Number(m.id);
+      const wl = waitlistedIds.has(uid);
+      return {
+        id: uid,
+        firstName: m.first_name,
+        lastName: m.last_name,
+        waitlisted: wl,
+        waitlistRank: wl ? waitlistRankByUserId.get(uid) ?? null : null,
+      };
+    }),
     viewerIsMember: mine,
     viewerIsActiveRoster,
+    viewerQueuedForRoster:
+      mine && user ? waitlistedIds.has(Number(user.id)) : false,
+    viewerCanSetAvailability,
     viewerOnWaitlist,
     viewerId: user ? Number(user.id) : null,
     viewerSlots: mySlots,
     overlapSlots: overlap,
+    bookingWindowCandidates,
+    bookingRentalGroups,
+    viewerMatchedRentalOptionNumbers: viewerMatchedRentalOptionNums,
+    viewerWaitlistedRentalOptionNumbers: viewerWaitlistedRentalOptionNums,
+    viewerFitsRentalOptionNumbers: viewerFitsRentalOptionNums,
     memberAvailability,
     membersWithAvailability,
-    rosterSize: cap,
+    rosterSize: wlLocked ? cap : count,
   };
 
   if (req.query.diag === "1") {
@@ -576,7 +887,7 @@ app.post("/api/runs/public/:token/leave", requireAuth, (req, res) => {
     if (run.creator_id === req.user.id) {
       const next = db
         .prepare(
-          `SELECT user_id FROM run_members WHERE run_id = ? ORDER BY joined_at ASC LIMIT 1`
+          `SELECT user_id FROM run_members WHERE run_id = ? ORDER BY joined_at ASC, rowid ASC LIMIT 1`
         )
         .get(run.id);
       if (next) {
@@ -603,10 +914,10 @@ app.put("/api/runs/public/:token/availability", requireAuth, (req, res) => {
     res.status(403).json({ error: "Join this run before setting availability." });
     return;
   }
-  if (!isActiveRosterMember(run.id, req.user.id, run.capacity)) {
+  if (!canSetAvailability(run.id, req.user.id, run.capacity)) {
     res.status(403).json({
       error:
-        "You are on the waitlist. You can set availability after you move up to the active roster when a spot opens.",
+        "You are on the waitlist. A shared 2+ hour window is already locked in for the roster; when someone leaves you can move up and set availability again.",
     });
     return;
   }
@@ -617,16 +928,20 @@ app.put("/api/runs/public/:token/availability", requireAuth, (req, res) => {
   }
   const slotsJson = JSON.stringify(slots);
   db.prepare(
-    `INSERT INTO availability (run_id, user_id, slots_json, updated_at)
-     VALUES (?, ?, ?, datetime('now'))
+    `INSERT INTO availability (run_id, user_id, slots_json, updated_at, first_saved_at)
+     VALUES (?, ?, ?, datetime('now'), datetime('now'))
      ON CONFLICT(run_id, user_id) DO UPDATE SET
        slots_json = excluded.slots_json,
-       updated_at = excluded.updated_at`
+       updated_at = excluded.updated_at,
+       first_saved_at = COALESCE(availability.first_saved_at, excluded.first_saved_at)`
   ).run(run.id, req.user.id, slotsJson);
 
-  const activeIds = activeRosterUserIds(run.id, run.capacity);
+  const wlLocked = schedulingWaitlistLocked(run.id, run.capacity);
+  const countIds = wlLocked
+    ? activeRosterUserIds(run.id, run.capacity)
+    : orderedMemberUserIds(run.id);
   let membersWithAvailability = 0;
-  for (const uid of activeIds) {
+  for (const uid of countIds) {
     const row = db
       .prepare(
         "SELECT slots_json FROM availability WHERE run_id = ? AND user_id = ?"
@@ -645,7 +960,7 @@ app.put("/api/runs/public/:token/availability", requireAuth, (req, res) => {
     ok: true,
     count: slots.length,
     membersWithAvailability,
-    rosterSize: run.capacity,
+    rosterSize: wlLocked ? run.capacity : memberCount(run.id),
   });
 });
 

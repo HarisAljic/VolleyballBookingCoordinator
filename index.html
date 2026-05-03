@@ -152,6 +152,12 @@
         toggle.addEventListener("click", function () {
           setExpanded(!expanded);
         });
+
+        /** Below Tailwind `md` (768px), sidebar width is a large share of the viewport — close after nav. */
+        var narrowNavMq = window.matchMedia("(max-width: 767px)");
+        window.addEventListener("vb-navigated-narrow", function () {
+          if (narrowNavMq.matches) setExpanded(false);
+        });
       })();
     </script>
     <script type="module" src="/js/main.js"></script>

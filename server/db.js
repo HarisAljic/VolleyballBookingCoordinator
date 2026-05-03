@@ -51,6 +51,7 @@ export function openDb() {
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       slots_json TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      first_saved_at TEXT,
       PRIMARY KEY (run_id, user_id)
     );
 
@@ -59,5 +60,13 @@ export function openDb() {
     CREATE INDEX IF NOT EXISTS idx_runs_code ON runs(run_code);
     CREATE INDEX IF NOT EXISTS idx_runs_share ON runs(share_token);
   `);
+  const avCols = db.prepare("PRAGMA table_info(availability)").all();
+  if (!avCols.some((c) => c.name === "first_saved_at")) {
+    db.exec("ALTER TABLE availability ADD COLUMN first_saved_at TEXT");
+  }
+  db.prepare(
+    `UPDATE availability SET first_saved_at = updated_at
+     WHERE first_saved_at IS NULL OR TRIM(first_saved_at) = ''`
+  ).run();
   return db;
 }

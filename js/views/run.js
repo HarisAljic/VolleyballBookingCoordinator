@@ -21,7 +21,11 @@ import {
   weekStartsOverlappingRun,
 } from "../lib/dates.js";
 import { normalizeSlotKey, slotKeyFromDayStrAndHour } from "../lib/slot-keys.js";
-import { renderOverlapBlockSummary, renderOverlapWindowsForCourtTile } from "../lib/overlap-ui.js";
+import {
+  renderBookingRentalGroupsForCourtTile,
+  renderOverlapBlockSummary,
+  renderOverlapWindowsForCourtTile,
+} from "../lib/overlap-ui.js";
 import { SKEDDA_VENUES, skeddaVenueHref } from "../lib/skedda.js";
 import { formatUsdFromCents, venueTotalPriceCents } from "../lib/pricing.js";
 import { otherTeammateCountAtSlot, syncSlotCell } from "../lib/calendar-cell.js";
@@ -146,30 +150,83 @@ export async function renderRunPage() {
     }
   }
 
-  const viewerCanPick = !!run.viewerIsActiveRoster;
+  const viewerCanPick = Boolean(
+    run.viewerCanSetAvailability !== undefined
+      ? run.viewerCanSetAvailability
+      : run.viewerIsActiveRoster
+  );
   const selected = viewerCanPick ? getViewerSlotSelection(token, run) : new Set();
 
   const slotsByUserId = new Map();
   for (const m of run.memberAvailability || []) {
     slotsByUserId.set(Number(m.userId), m.slots || []);
   }
+  const legacyMatched = run.viewerMatchedRentalOptionNumbers || [];
+  const splitWl = run.viewerWaitlistedRentalOptionNumbers;
+  const splitFit = run.viewerFitsRentalOptionNumbers;
+  const hasPerOptionRental = splitWl != null && splitFit != null;
+  const rentalChips = [];
+  if (hasPerOptionRental) {
+    for (const n of splitWl) {
+      rentalChips.push({ n: Number(n), kind: "wl" });
+    }
+    for (const n of splitFit) {
+      rentalChips.push({ n: Number(n), kind: "fit" });
+    }
+  }
+  if (!rentalChips.length && legacyMatched.length > 0) {
+    const legacyAllWaitlist =
+      Boolean(run.viewerQueuedForRoster) ||
+      (!!run.viewerIsMember &&
+        !run.viewerIsActiveRoster &&
+        !!run.schedulingWaitlistActive);
+    for (const n of legacyMatched) {
+      rentalChips.push({
+        n: Number(n),
+        kind: legacyAllWaitlist ? "wl" : "fit",
+      });
+    }
+  }
+  rentalChips.sort(
+    (a, b) => a.n - b.n || (a.kind === b.kind ? 0 : a.kind === "wl" ? -1 : 1)
+  );
+  const viewerRentalChipStrip =
+    rentalChips.length === 0
+      ? ""
+      : `<span class="ml-2 flex flex-wrap items-center gap-1">${rentalChips
+          .map(({ n, kind }) => {
+            const lbl =
+              kind === "wl"
+                ? `Waitlisted · rental opt. ${n}`
+                : `In coalition · rental opt. ${n}`;
+            const cls =
+              kind === "wl"
+                ? "rounded bg-amber-950/85 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-50 ring-1 ring-amber-600/75"
+                : "rounded bg-violet-950/85 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-100 ring-1 ring-violet-600/75";
+            return `<span class="${cls}">${escapeHtml(lbl)}</span>`;
+          })
+          .join("")}</span>`;
+
+  const rosterCapUi = Number(run.capacity) || 0;
   const memberMarkerCls = "[&>summary::-webkit-details-marker]:hidden";
   const memberRows = run.members
-    .map((m) => {
+    .map((m, idx) => {
       const mid = Number(m.id);
       const isViewer =
         run.viewerIsMember && run.viewerId != null && mid === Number(run.viewerId);
-      const waitlisted = !!m.waitlisted;
+      const pastJoinCap = idx >= rosterCapUi;
+      const pastSavedWaitlist = !!m.waitlisted;
       const wlRank = m.waitlistRank != null ? Number(m.waitlistRank) : null;
+      const wlFrozen = pastJoinCap && !!run.schedulingWaitlistActive;
       const name = `${escapeHtml(m.firstName)} ${escapeHtml(m.lastName)}`;
       const wlTag = `<span class="ml-2 shrink-0 rounded bg-amber-950/90 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-100 ring-1 ring-amber-600/90">Waitlist #${wlRank != null ? wlRank : "?"}</span>`;
 
-      if (waitlisted) {
+      if (wlFrozen) {
         const waitBlurb = isViewer
-          ? `<p class="mt-1 text-xs text-amber-100/90">When someone on the active roster leaves, you move up in order. Then you can pick and save times on the calendar.</p>`
+          ? `<p class="mt-1 text-xs text-amber-100/90">A shared window is locked for the first ${rosterCapUi} roster spots — calendar editing is closed until you move onto the active roster.</p>`
           : `<p class="mt-1 text-xs text-slate-500">Waiting for a spot on the active roster (first in, first up).</p>`;
         return `<div class="member-avail mb-1 rounded border border-amber-900/50 bg-amber-950/20 px-2 py-1.5 text-sm">
-            <div class="flex flex-wrap items-center gap-x-1"><span class="font-medium text-slate-100">${name}</span>${wlTag}</div>
+            <div class="flex flex-wrap items-center gap-x-1"><span class="font-medium text-slate-100">${name}</span>${pastSavedWaitlist ? wlTag : ""}${isViewer ? viewerRentalChipStrip : ""}</div>
             ${waitBlurb}
           </div>`;
       }
@@ -192,8 +249,9 @@ export async function renderRunPage() {
         const bodyWrap = isViewer
           ? `<div id="member-avail-viewer-body" class="member-avail-body mt-1">${bodyInner}</div>`
           : `<div class="member-avail-body mt-1">${bodyInner}</div>`;
+        const head = `<span class="font-medium text-slate-200">${name}</span>${pastSavedWaitlist ? wlTag : ""}`;
         return `<details class="${detailsCls}" data-user-id="${mid}">
-            <summary class="cursor-pointer select-none text-sm"><span class="font-medium text-slate-200">${name}</span>${noteSpan}</summary>
+            <summary class="cursor-pointer select-none text-sm">${head}${noteSpan}${isViewer ? viewerRentalChipStrip : ""}</summary>
             ${bodyWrap}
           </details>`;
       }
@@ -207,8 +265,9 @@ export async function renderRunPage() {
       const bodyWrap = isViewer
         ? `<div id="member-avail-viewer-body" class="member-avail-body mt-1">${bodyUl}</div>`
         : `<div class="member-avail-body mt-1">${bodyUl}</div>`;
+      const head = `<span class="font-medium text-slate-200">${name}</span>${pastSavedWaitlist ? wlTag : ""}`;
       return `<details class="${detailsCls}" data-user-id="${mid}">
-          <summary class="cursor-pointer select-none text-sm"><span class="font-medium text-slate-200">${name}</span>${noteSpan}</summary>
+          <summary class="cursor-pointer select-none text-sm">${head}${noteSpan}${isViewer ? viewerRentalChipStrip : ""}</summary>
           ${bodyWrap}
         </details>`;
     })
@@ -226,11 +285,18 @@ export async function renderRunPage() {
       ? Number(run.waitlistCount)
       : Math.max(0, (Number(run.memberCount) || 0) - (Number(run.capacity) || 0));
 
+  const bookingRentals = run.bookingRentalGroups || [];
+
   let overlapBlock = "";
   if (run.overlapSlots && run.overlapSlots.length) {
     overlapBlock = renderOverlapBlockSummary(run.overlapSlots);
   } else if (run.isFull) {
-    overlapBlock = `<p class="mt-2 text-sm text-amber-400/90">Active roster is full; everyone on it must save availability before a shared grid appears.</p>`;
+    overlapBlock = run.schedulingWaitlistActive
+      ? `<p class="mt-2 text-sm text-amber-400/90">Active roster is full; everyone on it must save availability before a shared grid appears.</p>`
+      : `<p class="mt-2 text-sm text-amber-400/90">More than a full roster is still scheduling. Everyone must save overlapping hours until a shared <strong>2+ hour</strong> window exists across <em>all</em> joiners — then extras move to the waitlist.</p>`;
+  }
+  if (bookingRentals.length && (!run.overlapSlots || run.overlapSlots.length === 0)) {
+    overlapBlock += `<p class="mt-3 rounded border border-violet-900/35 bg-violet-950/20 px-3 py-2 text-sm text-slate-200">No hour is shared by <em>every</em> person universally — if <strong>Roster windows</strong> (Skedda panel) lists times, each is bookable for your full run size.</p>`;
   }
 
   let courtSkeddaViewDate = run.dateStart || "";
@@ -240,6 +306,8 @@ export async function renderRunPage() {
       .filter(Boolean)
       .sort();
     if (sortedOv[0]) courtSkeddaViewDate = slotKeyDayStr(sortedOv[0]);
+  } else if (bookingRentals[0]?.windows?.[0]?.slotKeys?.[0]) {
+    courtSkeddaViewDate = slotKeyDayStr(bookingRentals[0].windows[0].slotKeys[0]);
   }
   const skeddaCourtVenueLis = SKEDDA_VENUES.map(
     (v) =>
@@ -267,6 +335,17 @@ export async function renderRunPage() {
             : ""
         }
       </div>
+      ${
+        run.viewerIsMember &&
+        run.viewerQueuedForRoster &&
+        run.viewerCanSetAvailability &&
+        !run.viewerOnWaitlist
+          ? `<div class="mb-4 rounded-lg border border-amber-800/50 bg-amber-950/35 px-4 py-3 text-sm text-amber-100/95">
+              <p class="font-medium text-amber-50">You saved at least one hour that already had ${escapeHtml(String(rosterCapUi))} people on it (save order).</p>
+              <p class="mt-1 text-amber-100/90">Amber hours are at the run’s roster cap for that slot — pick other times too if you want more overlap options.</p>
+            </div>`
+          : ""
+      }
       <details class="mb-3 text-xs text-slate-600">
         <summary class="cursor-pointer text-slate-500 hover:text-slate-400">Heatmap not showing? Diagnostics</summary>
         <p class="mt-2 pl-1 leading-relaxed">
@@ -289,9 +368,21 @@ export async function renderRunPage() {
         </div>
         <div class="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
           <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Skedda court check</h2>
-          <p class="text-sm text-slate-400">Pick a shared 2–4 hour block below (only shows links when the full time window is free).</p>
-          <div class="mt-3 space-y-3">
-            ${run.overlapSlots && run.overlapSlots.length ? renderOverlapWindowsForCourtTile(run.overlapSlots) : `<div class="rounded border border-slate-800/70 bg-slate-950/20 px-3 py-2 text-sm text-slate-500">No shared overlap yet.</div>`}
+          <p class="text-sm text-slate-400">Pick a contiguous 2–4 hour block. <strong class="font-medium text-slate-300">Universal overlap</strong> is hours where literally every roster member agrees; <strong class="font-medium text-violet-300/95">Roster windows</strong> lists alternate times that still work for the full run size (every spot on the booking roster covers the block).</p>
+          <div class="mt-3 space-y-5">
+            <div>
+              <p class="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Universal overlap</p>
+              ${
+                run.overlapSlots && run.overlapSlots.length
+                  ? renderOverlapWindowsForCourtTile(run.overlapSlots)
+                  : `<div class="rounded border border-slate-800/70 bg-slate-950/20 px-3 py-2 text-sm text-slate-500">None yet — widen availability or converge on fewer times.</div>`
+              }
+            </div>
+            ${
+              bookingRentals.length > 0
+                ? `<div>${renderBookingRentalGroupsForCourtTile(bookingRentals)}</div>`
+                : ""
+            }
           </div>
           <div class="mt-4 text-xs text-slate-500">Venue pages:</div>
           <ul class="mt-2 list-inside list-disc text-sm text-slate-400">${skeddaCourtVenueLis}</ul>
@@ -301,21 +392,28 @@ export async function renderRunPage() {
       <div class="mb-3 rounded-lg border border-slate-800 bg-slate-900/60 px-4 py-3 text-sm text-slate-400">
         <p class="font-medium text-slate-300">Availability map</p>
         <ul class="mt-2 list-inside list-disc space-y-1">
-          <li><span class="text-sky-400">Blue shades</span> — active roster players who saved this hour (darker = more).</li>
+          <li><span class="text-sky-400">Blue shades</span> — players who saved this hour (darker = more).</li>
+          <li><span class="text-amber-300">Amber / yellow</span> — this hour already has the run’s roster size (${escapeHtml(String(rosterCapUi))}) of people; full for that slot. You can still choose other hours if you’re waitlisted.</li>
           ${
             viewerCanPick
               ? `<li><span class="text-emerald-400">Green</span> — your pick (click to toggle, then Save).</li>`
               : run.viewerOnWaitlist
-                ? `<li><span class="text-amber-400">Waitlist</span> — you’ll pick times after you join the active roster.</li>`
+                ? `<li><span class="text-amber-400">Waitlist</span> — a shared 2+ hour window is set for the roster; you’ll pick times after you move up.</li>`
                 : `<li><span class="text-slate-500">Read-only</span> — sign in and join this run to add your hours.</li>`
           }
         </ul>
       </div>
       ${
         viewerCanPick
-          ? `<p class="mb-2 text-sm text-slate-400">Teammate picks load as soon as you open this page. Toggle your hours, then save.</p>`
+          ? `<p class="mb-2 text-sm text-slate-400">${
+              run.viewerQueuedForRoster && !run.viewerOnWaitlist
+                ? `Amber cells are at the roster cap (${rosterCapUi} people) for that hour — pick other times too if you want. `
+                : ""
+            }Teammate picks load as soon as you open this page. Toggle your hours, then save.</p>`
           : run.viewerOnWaitlist
-            ? `<p class="mb-2 rounded-lg border border-amber-900/50 bg-amber-950/25 px-4 py-3 text-sm text-amber-100/90">You’re on the <strong>waitlist</strong>. When you reach the active roster, you can use the calendar below.</p>`
+            ? `<p class="mb-2 rounded-lg border border-amber-900/50 bg-amber-950/25 px-4 py-3 text-sm text-amber-100/90">You’re on the <strong>waitlist</strong> (a shared 2+ hour window is locked in for the first ${escapeHtml(
+                String(run.capacity)
+              )}). When you move up to the active roster, you can use the calendar below.</p>`
             : `<p class="mb-2 rounded-lg border border-amber-900/50 bg-amber-950/20 px-4 py-3 text-sm text-amber-200/90">You can see everyone below. To add yours: sign in and <a class="underline" href="/?join=${encodeURIComponent(run.runCode)}">join with code ${escapeHtml(run.runCode)}</a>.</p>`
       }
       ${
@@ -523,7 +621,8 @@ export async function renderRunPage() {
           viewerId,
           el2.getAttribute("data-hour") || "",
           inR2,
-          viewerCanPick
+          viewerCanPick,
+          rosterCapUi
         );
       });
     };

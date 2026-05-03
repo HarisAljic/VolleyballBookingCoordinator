@@ -1,5 +1,6 @@
 import { readQuery, state, setQuery } from "./state.js";
 import { navHome, navJoin, navRuns, navAccount } from "./dom.js";
+import { notifySidebarNavigated } from "./sidebar-nav.js";
 import { renderHome } from "./views/home.js";
 import { renderJoin } from "./views/join.js";
 import { renderAccount } from "./views/account.js";
@@ -31,6 +32,7 @@ navHome?.addEventListener("click", (e) => {
   e.preventDefault();
   setQuery({});
   route();
+  notifySidebarNavigated();
 });
 navJoin?.addEventListener("click", (e) => {
   e.preventDefault();
@@ -40,12 +42,14 @@ navJoin?.addEventListener("click", (e) => {
   readQuery();
   if (!state.runToken) clearRunViewerSlotDrafts();
   renderJoin();
+  notifySidebarNavigated();
 });
 navRuns?.addEventListener("click", (e) => {
   e.preventDefault();
   setQuery({});
   if (!state.runToken) clearRunViewerSlotDrafts();
   renderHome();
+  notifySidebarNavigated();
 });
 navAccount?.addEventListener("click", (e) => {
   e.preventDefault();
@@ -53,6 +57,7 @@ navAccount?.addEventListener("click", (e) => {
   readQuery();
   if (!state.runToken) clearRunViewerSlotDrafts();
   renderAccount();
+  notifySidebarNavigated();
 });
 
 route();

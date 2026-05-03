@@ -72,7 +72,7 @@ const txn = db.transaction(() => {
   if (creatorWasKicked) {
     const next = db
       .prepare(
-        `SELECT user_id FROM run_members WHERE run_id = ? ORDER BY joined_at ASC LIMIT 1`
+        `SELECT user_id FROM run_members WHERE run_id = ? ORDER BY joined_at ASC, rowid ASC LIMIT 1`
       )
       .get(run.id);
     if (next) {

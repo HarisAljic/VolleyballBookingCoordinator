@@ -112,6 +112,63 @@ export function slotEndIsoForHours(slotStartIso, hours) {
   );
 }
 
+/** Grouped roster windows (“rental options”) — each variant row uses `.btn-check-block`. */
+export function renderBookingRentalGroupsForCourtTile(rentalGroups) {
+  if (!rentalGroups?.length) return "";
+  const capKey = rentalGroups.find((g) => g.windows?.[0]?.rosterCapacity != null)?.windows?.[0]
+    ?.rosterCapacity;
+  const capExplain = escapeHtml(capKey != null ? String(capKey) : "the roster size");
+
+  const blocks = rentalGroups.map((g) => {
+    const wins = [...(g.windows || [])];
+    const anchor = wins.reduce(
+      (best, cur) =>
+        (cur.slotKeys?.length || 0) > (best.slotKeys?.length || 0) ? cur : best,
+      wins[0]
+    );
+    const anchorHuman = anchor?.slotKeys?.length
+      ? formatSharedContiguousRange(anchor.slotKeys)
+      : "";
+    const rows = wins
+      .map((c) => {
+        const keys = c.slotKeys || [];
+        if (!keys.length) return "";
+        const start = keys[0];
+        const end = slotEndIsoForHours(start, Number(c.durationHours) || keys.length);
+        const human = formatSharedContiguousRange(keys);
+        const cap = Number(c.rosterCapacity);
+        const capLbl = escapeHtml(Number.isFinite(cap) ? `${cap}-player quorum` : "roster quorum");
+        return `<div class="flex flex-wrap items-center justify-between gap-2 rounded border border-violet-900/35 bg-violet-950/20 px-3 py-2">
+            <div class="min-w-[12rem] text-sm text-slate-200">${escapeHtml(human)}
+              <div class="mt-1 text-[11px] uppercase tracking-wide text-violet-200/85">${capLbl}</div>
+            </div>
+            <button type="button" class="btn-check-block rounded border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40" data-slot-start="${escapeHtml(
+              start
+            )}" data-slot-end="${escapeHtml(end)}" ${!end ? "disabled" : ""}>Check venues</button>
+          </div>`;
+      })
+      .filter(Boolean)
+      .join("");
+    return `<section class="rounded-lg border border-violet-900/35 bg-violet-950/[0.07] p-3">
+        <p class="text-sm font-semibold text-violet-200">${escapeHtml(
+          `Rental option ${g.optionNumber}`
+        )}</p>
+        <p class="mt-0.5 text-xs text-slate-400">${escapeHtml(
+          anchorHuman
+            ? `Same start — variants by length (${anchorHuman})`
+            : "Same calendar start — variants below differ by booking length."
+        )}</p>
+        <div class="mt-3 space-y-2">${rows}</div>
+      </section>`;
+  });
+
+  return `<div class="space-y-4">
+      <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Roster rentals</p>
+      <p class="text-xs leading-relaxed text-slate-500">Needs <strong>${capExplain}</strong> people counting toward the coalition covering every hour in a block — while scheduling is still open before the roster waitlist locks, everyone who joined can count; after scheduling locks only roster seats count. Your tags for “fits / waitlisted” match if you saved a block that clears at least one length below.</p>
+      ${blocks.join("")}
+    </div>`;
+}
+
 export function renderOverlapWindowsForCourtTile(overlapSlots) {
   const runs = contiguousOverlapRuns(overlapSlots);
   const groups = [

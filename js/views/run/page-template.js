@@ -1,10 +1,7 @@
 import { escapeHtml } from "../../lib/html.js";
 import { computeDisplayLockCount } from "../../lib/dates.js";
 import { formatIncludedWeekdaysShort } from "../../../run-weekdays.js";
-import {
-  renderBookingRentalsByDate,
-  renderOverlapWindowsForCourtTile,
-} from "../../lib/overlap-ui.js";
+import { renderBookingRentalsByDate } from "../../lib/overlap-ui.js";
 import { SKEDDA_VENUES, skeddaVenueHref } from "../../lib/skedda.js";
 
 export function renderRunPageHtml(ctx) {
@@ -13,7 +10,6 @@ export function renderRunPageHtml(ctx) {
     selected,
     rosterTargetsPanel,
     memberRows,
-    overlapBlock,
     bookingRentalsByDate,
     visibleRosterSizes,
     hasBookingRentals,
@@ -73,26 +69,17 @@ export function renderRunPageHtml(ctx) {
             <span class="text-xs text-slate-500">${run.memberCount} total</span>
           </div>
           <div class="text-sm">${memberRows}</div>
-          ${overlapBlock ? `<div class="mt-2">${overlapBlock}</div>` : ""}
         </div>
         <div class="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
           <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Skedda court check</h2>
-          <p class="text-sm text-slate-400">Pick a bookable block (12→2h, 18→3h, 24→4h). <strong class="font-medium text-slate-300">Universal overlap</strong> is hours where literally every roster member agrees; <strong class="font-medium text-violet-300/95">Roster windows</strong> lists bookable times with roster and waitlist.</p>
-          <div class="mt-3 space-y-5">
-            <div>
-              <p class="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Universal overlap</p>
-              ${
-                run.overlapSlots?.length
-                  ? renderOverlapWindowsForCourtTile(run.overlapSlots)
-                  : `<div class="rounded border border-slate-800/70 bg-slate-950/20 px-3 py-2 text-sm text-slate-500">None yet — widen availability or converge on fewer times.</div>`
-              }
-            </div>
+          <p class="text-sm text-slate-400">Pick a bookable block (12→2h, 18→3h, 24→4h). <strong class="font-medium text-violet-300/95">Roster rentals</strong> lists bookable times with roster and waitlist — use <strong class="font-medium text-slate-300">Check venues</strong> on each block.</p>
+          <div class="mt-3">
             ${
               hasBookingRentals
-                ? `<div>${renderBookingRentalsByDate(bookingRentalsByDate, visibleRosterSizes, {
+                ? renderBookingRentalsByDate(bookingRentalsByDate, visibleRosterSizes, {
                     openByDefault: !run.runFound,
-                  })}</div>`
-                : ""
+                  })
+                : `<div class="rounded border border-slate-800/70 bg-slate-950/20 px-3 py-2 text-sm text-slate-500">No bookable roster windows yet — save availability until enough players match a block.</div>`
             }
           </div>
           <div class="mt-4 text-xs text-slate-500">Venue pages:</div>

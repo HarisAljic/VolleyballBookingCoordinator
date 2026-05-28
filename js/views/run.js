@@ -5,7 +5,6 @@ import { layout } from "../layout.js";
 import { refreshUser } from "../auth-nav.js";
 import { state } from "../state.js";
 import { slotKeyDayStr } from "../lib/dates.js";
-import { normalizeSlotKey } from "../lib/slot-keys.js";
 import { otherTeammateCountAtSlot } from "../lib/calendar-cell.js";
 import { slotKeyFromDayStrAndHour } from "../lib/slot-keys.js";
 import {
@@ -15,7 +14,6 @@ import {
 import { mountRunCalendar } from "./run/calendar-controller.js";
 import { bindRunPageEvents } from "./run/event-bindings.js";
 import { renderMemberRows } from "./run/members-panel.js";
-import { buildOverlapBlockHtml } from "./run/overlap-block.js";
 import {
   buildSkeddaVenueListHtml,
   renderRunPageHtml,
@@ -105,13 +103,7 @@ export async function renderRunPage() {
   const lockCount = Number(run.membersWithAvailability) || 0;
 
   let courtSkeddaViewDate = run.dateStart || "";
-  if (run.overlapSlots?.length) {
-    const sortedOv = [...run.overlapSlots]
-      .map((x) => normalizeSlotKey(String(x)))
-      .filter(Boolean)
-      .sort();
-    if (sortedOv[0]) courtSkeddaViewDate = slotKeyDayStr(sortedOv[0]);
-  } else if (bookingRentalsByDate[0]?.options?.[0]?.slotKeys?.[0]) {
+  if (bookingRentalsByDate[0]?.options?.[0]?.slotKeys?.[0]) {
     courtSkeddaViewDate = slotKeyDayStr(bookingRentalsByDate[0].options[0].slotKeys[0]);
   }
 
@@ -120,7 +112,6 @@ export async function renderRunPage() {
     selected,
     rosterTargetsPanel: renderRosterTargetsPanel(run, visibleRosterSizes),
     memberRows: renderMemberRows(run, { selected, slotsByUserId, visibleRosterSizes, bookingRentalsByDate }),
-    overlapBlock: buildOverlapBlockHtml(run, hasRentals),
     bookingRentalsByDate,
     visibleRosterSizes,
     hasBookingRentals: hasRentals,

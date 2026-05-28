@@ -18,7 +18,6 @@ import {
   activeRosterUserIds,
   canSetAvailability,
   countMembersWithAvailability,
-  intersectionSlotsForUserIds,
   loadMemberAvailabilityHeatmap,
   memberSlotsFromRow,
   runIncludedWeekdays,
@@ -77,21 +76,6 @@ export function buildPublicRunPayload(run, user, { diag = false } = {}) {
   }
 
   const full = activeCountForSize(orderedIds, cap) >= cap;
-  let overlap = [];
-  const overlapSize = 12;
-  const overlapActive = activeCountForSize(orderedIds, overlapSize);
-  if (overlapActive >= overlapSize || !wlLocked) {
-    const overlapUserIds = wlLocked
-      ? activeRosterUserIds(run.id, overlapSize)
-      : orderedIds;
-    if (overlapUserIds.length > 0) {
-      overlap = intersectionSlotsForUserIds(
-        run.id,
-        overlapUserIds,
-        includedWeekdays
-      );
-    }
-  }
 
   const memberAvailability = loadMemberAvailabilityHeatmap(
     run.id,
@@ -199,7 +183,6 @@ export function buildPublicRunPayload(run, user, { diag = false } = {}) {
     viewerOnWaitlist: Boolean(viewerTags?.hourWaitlisted),
     viewerId: user ? Number(user.id) : null,
     viewerSlots: mySlots,
-    overlapSlots: overlap,
     viewerMatchedRentalOptionNumbers: viewerMatchedRentalOptionNums,
     viewerWaitlistedRentalOptionNumbers: viewerTags?.waitlistedSizes ?? [],
     viewerFitsRentalOptionNumbers: viewerTags?.fitsSizes ?? [],

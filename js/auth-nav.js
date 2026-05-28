@@ -1,10 +1,10 @@
 import { state } from "./state.js";
 import { api } from "./api.js";
-import { navRuns, accountLabel } from "./dom.js";
+import { navCreate, accountLabel } from "./dom.js";
 
 export function setNavAuth() {
   const authed = !!state.user;
-  if (navRuns) navRuns.classList.toggle("hidden", !authed);
+  if (navCreate) navCreate.classList.toggle("hidden", !authed);
   if (accountLabel) {
     accountLabel.textContent = authed
       ? `${state.user.firstName} ${state.user.lastName}`
@@ -12,12 +12,17 @@ export function setNavAuth() {
   }
 }
 
+export function applyAuthSession(data) {
+  state.user = data?.user ?? null;
+  state.defaultRun = data?.defaultRun ?? null;
+  setNavAuth();
+}
+
 export async function refreshUser() {
   try {
-    const { user } = await api("/api/auth/me", { method: "GET" });
-    state.user = user;
+    const data = await api("/api/auth/me", { method: "GET" });
+    applyAuthSession(data);
   } catch {
-    state.user = null;
+    applyAuthSession({ user: null, defaultRun: null });
   }
-  setNavAuth();
 }

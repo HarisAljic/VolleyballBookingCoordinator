@@ -1,6 +1,7 @@
 import { escapeHtml } from "../lib/html.js";
 import { layout, showToast } from "../layout.js";
-import { refreshUser } from "../auth-nav.js";
+import { applyAuthSession, refreshUser } from "../auth-nav.js";
+import { navigateToDefaultRun } from "../lib/default-run-nav.js";
 import { state, setQuery } from "../state.js";
 import { api } from "../api.js";
 import { renderRunPage } from "./run.js";
@@ -38,7 +39,7 @@ export async function renderHome() {
         (r) => `
         <tr>
           <td class="px-4 py-3 align-middle font-medium text-slate-200">${escapeHtml(r.title)}</td>
-          <td class="px-4 py-3 align-middle tabular-nums text-slate-400">${r.member_count}/${r.capacity}</td>
+          <td class="px-4 py-3 align-middle tabular-nums text-slate-400">${r.member_count} joined</td>
           <td class="px-4 py-3 align-middle">${statusCell(r)}</td>
           <td class="px-4 py-3 align-middle text-right">
             <a class="text-emerald-400 hover:text-emerald-300" href="${escapeHtml(r.publicUrl || "#")}">Open run</a>
@@ -46,41 +47,38 @@ export async function renderHome() {
         </tr>`
       )
       .join("");
+    const defaultBanner = state.defaultRun
+      ? `
+        <div class="mb-7 overflow-hidden rounded-2xl border border-emerald-700/40 bg-gradient-to-br from-emerald-950/60 via-slate-950/40 to-slate-950/20">
+          <div class="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:gap-8">
+            <div class="min-w-0">
+              <p class="text-[11px] font-semibold uppercase tracking-wider text-emerald-300/80">Default weekend run</p>
+              <p class="mt-1 truncate text-lg font-semibold text-white">${escapeHtml(state.defaultRun.monthLabel)}</p>
+              <p class="mt-1 text-sm text-slate-300">
+                Fri–Sun · code <span class="font-mono text-emerald-300">${escapeHtml(state.defaultRun.runCode)}</span>
+                <span class="text-slate-500">·</span>
+                auto-added on sign-in
+              </p>
+              <p class="mt-2 text-xs text-slate-500">To open a different month, go to Join and enter <span class="font-mono">MONTHYEAR</span> (e.g. <span class="font-mono">JUNE2026</span>).</p>
+            </div>
+            <div class="flex shrink-0 flex-wrap gap-2">
+              <button type="button" id="btn-open-default-run" class="rounded-lg bg-emerald-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-emerald-500">Open</button>
+              <a href="/?join" class="rounded-lg border border-slate-600 bg-slate-950/30 px-3.5 py-2 text-sm font-medium text-slate-200 hover:bg-slate-900/60">Join month by code</a>
+            </div>
+          </div>
+          <div class="border-t border-emerald-800/30 bg-slate-950/30 px-5 py-3 text-xs text-slate-400">
+            Tip: share the run link with teammates. Everyone can still create custom runs from the sidebar.
+          </div>
+        </div>`
+      : "";
     layout("Your runs", `
-        <p class="mb-6 text-slate-400">Create a run, share the code or link, then check Skedda venues when the roster is full.</p>
-        <div class="mb-10 rounded-xl border border-slate-800 bg-slate-900/50 p-6">
-          <h2 class="mb-4 text-lg font-semibold text-white">New run</h2>
-          <form id="form-create-run" class="grid gap-4 sm:grid-cols-2">
-            <label class="block sm:col-span-2">
-              <span class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Title</span>
-              <input name="title" required class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none ring-emerald-500/40 focus:ring-2" placeholder="Friday night competitive" />
-            </label>
-            <label class="block">
-              <span class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Roster size</span>
-              <select name="capacity" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none ring-emerald-500/40 focus:ring-2">
-                <option value="12">12 players</option>
-                <option value="18">18 players</option>
-                <option value="24">24 players</option>
-              </select>
-            </label>
-            <div class="hidden sm:block"></div>
-            <label class="block">
-              <span class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">First day</span>
-              <input name="dateStart" type="date" required class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none ring-emerald-500/40 focus:ring-2" />
-            </label>
-            <label class="block">
-              <span class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Last day</span>
-              <input name="dateEnd" type="date" required class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none ring-emerald-500/40 focus:ring-2" />
-            </label>
-            <button type="submit" class="sm:col-span-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-500">Create run</button>
-          </form>
-        </div>
+        ${defaultBanner}
         <div class="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
           <table class="w-full border-collapse text-left text-sm">
             <thead class="border-b border-slate-800 bg-slate-800/50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th scope="col" class="px-4 py-3 align-middle font-medium">Run</th>
-                <th scope="col" class="px-4 py-3 align-middle font-medium">Roster</th>
+                <th scope="col" class="px-4 py-3 align-middle font-medium">Joined</th>
                 <th scope="col" class="px-4 py-3 align-middle font-medium">Status</th>
                 <th scope="col" class="px-4 py-3 align-middle text-right font-medium">Link</th>
               </tr>
@@ -90,23 +88,8 @@ export async function renderHome() {
         </div>`,
       { variant: "app" }
     );
-    document.getElementById("form-create-run")?.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const fd = new FormData(e.target);
-      try {
-        const body = {
-          title: fd.get("title"),
-          capacity: Number(fd.get("capacity")),
-          dateStart: fd.get("dateStart"),
-          dateEnd: fd.get("dateEnd"),
-        };
-        const created = await api("/api/runs", { method: "POST", body: JSON.stringify(body) });
-        showToast(`Run created. Code ${created.runCode}`);
-        setQuery({ run: created.shareToken });
-        await renderRunPage();
-      } catch (err) {
-        showToast(err.message, true);
-      }
+    document.getElementById("btn-open-default-run")?.addEventListener("click", () => {
+      void navigateToDefaultRun();
     });
     return;
   }
@@ -140,7 +123,7 @@ export async function renderHome() {
     e.preventDefault();
     const fd = new FormData(e.target);
     try {
-      await api("/api/auth/register", {
+      const data = await api("/api/auth/register", {
         method: "POST",
         body: JSON.stringify({
           firstName: fd.get("firstName"),
@@ -149,7 +132,9 @@ export async function renderHome() {
           password: fd.get("password"),
         }),
       });
-      showToast("Welcome! You are signed in.");
+      applyAuthSession(data);
+      showToast("Welcome! You are in this month's weekend run.");
+      if (await navigateToDefaultRun()) return;
       await renderHome();
     } catch (err) {
       showToast(err.message, true);
@@ -159,11 +144,13 @@ export async function renderHome() {
     e.preventDefault();
     const fd = new FormData(e.target);
     try {
-      await api("/api/auth/login", {
+      const data = await api("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({ email: fd.get("email"), password: fd.get("password") }),
       });
+      applyAuthSession(data);
       showToast("Signed in.");
+      if (await navigateToDefaultRun()) return;
       await renderHome();
     } catch (err) {
       showToast(err.message, true);

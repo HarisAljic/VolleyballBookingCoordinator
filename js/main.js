@@ -1,10 +1,11 @@
 import { readQuery, state, setQuery } from "./state.js";
-import { navHome, navJoin, navRuns, navAccount } from "./dom.js";
+import { navHome, navJoin, navCreate, navAccount } from "./dom.js";
 import { notifySidebarNavigated } from "./sidebar-nav.js";
 import { renderHome } from "./views/home.js";
 import { renderJoin } from "./views/join.js";
 import { renderAccount } from "./views/account.js";
 import { renderRunPage, clearRunViewerSlotDrafts } from "./views/run.js";
+import { showToast } from "./layout.js";
 
 async function route() {
   readQuery();
@@ -19,6 +20,11 @@ async function route() {
     await renderRunPage();
     return;
   }
+  if (new URLSearchParams(window.location.search).has("create")) {
+    const { renderCreateRun } = await import("./views/create-run.js");
+    await renderCreateRun();
+    return;
+  }
   if (window.location.search.includes("join")) {
     await renderJoin();
     return;
@@ -27,6 +33,19 @@ async function route() {
 }
 
 window.addEventListener("popstate", () => route());
+
+// Surface unexpected runtime errors during navigation/refactors.
+window.addEventListener("error", (e) => {
+  const msg = e?.error?.message || e?.message || "Unexpected error";
+  showToast(msg, true);
+});
+window.addEventListener("unhandledrejection", (e) => {
+  const reason = e?.reason;
+  const msg =
+    (reason && typeof reason === "object" && "message" in reason && reason.message) ||
+    String(reason || "Unhandled promise rejection");
+  showToast(msg, true);
+});
 
 navHome?.addEventListener("click", (e) => {
   e.preventDefault();
@@ -44,11 +63,11 @@ navJoin?.addEventListener("click", (e) => {
   renderJoin();
   notifySidebarNavigated();
 });
-navRuns?.addEventListener("click", (e) => {
+navCreate?.addEventListener("click", (e) => {
   e.preventDefault();
-  setQuery({});
+  window.history.pushState({}, "", "/?create");
   if (!state.runToken) clearRunViewerSlotDrafts();
-  renderHome();
+  route();
   notifySidebarNavigated();
 });
 navAccount?.addEventListener("click", (e) => {

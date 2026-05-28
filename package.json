@@ -13,8 +13,11 @@
     "seed:overlap18": "node server/seed-overlap-18.mjs",
     "seed:abc18": "node server/seed-scenario-18-abc-windows.mjs",
     "seed:waitlist": "node server/seed-waitlist-demo.mjs",
+    "seed:roster30": "node server/seed-roster-30.mjs",
+    "seed:june2026": "node server/seed-june-2026.mjs",
     "kick:bench": "node server/kick-bench-waitlist-demo.mjs",
-    "db:reset": "node server/reset-db.mjs"
+    "db:reset": "node server/reset-db.mjs",
+    "test": "node --test default-run-month.test.mjs"
   },
   "engines": {
     "node": ">=18"

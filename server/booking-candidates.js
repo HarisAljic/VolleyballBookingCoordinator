@@ -4,6 +4,11 @@
  * (e.g. all joiners during open scheduling, or first-cap roster after waitlist lock).
  */
 import { normalizeSlotKey, slotKeyFromParts } from "../slotKeys.js";
+import {
+  dayInRunSchedule,
+  parseIncludedWeekdays,
+} from "../run-weekdays.js";
+import { bookingDurationHoursForSize } from "../roster-tiers.js";
 
 function pad2(n) {
   return String(n).padStart(2, "0");
@@ -51,8 +56,47 @@ export function bookingRosterSlotSets(db, runId, rosterUserIdsOrdered) {
 }
 
 /**
- * Candidate windows overlapping any saved slot on roster (cheap prune):
- * iterate days × calendar hours × 2–4 length, same-day contiguous only (matches overlap UI).
+ * Members who saved every hour in `slotKeys`, ordered by first-save time.
+ * First `rosterCapacity` = roster; rest = waitlist with rank (1-based).
+ */
+export function coalitionRosterWaitlistForWindow(
+  slotKeys,
+  rosterCapacity,
+  saveOrderedUserIds,
+  slotsByUser,
+  userInfoById
+) {
+  const cap = Math.max(1, Number(rosterCapacity)) || 1;
+  const keys = (slotKeys || [])
+    .map((k) => normalizeSlotKey(String(k)))
+    .filter(Boolean);
+  if (!keys.length) {
+    return { roster: [], waitlist: [], matchingCount: 0 };
+  }
+  const matching = [];
+  for (const uid of saveOrderedUserIds || []) {
+    const set = slotsByUser.get(Number(uid)) || slotsByUser.get(uid);
+    if (!set || !keys.every((k) => set.has(k))) continue;
+    matching.push(Number(uid));
+  }
+  const pick = (uid) => {
+    const u = userInfoById.get(Number(uid)) || userInfoById.get(uid) || {};
+    return {
+      userId: Number(uid),
+      firstName: u.firstName ?? "",
+      lastName: u.lastName ?? "",
+    };
+  };
+  const roster = matching.slice(0, cap).map(pick);
+  const waitlist = matching.slice(cap).map((uid, i) => ({
+    ...pick(uid),
+    waitlistRank: i + 1,
+  }));
+  return { roster, waitlist, matchingCount: matching.length };
+}
+
+/**
+ * Candidate windows: one contiguous block per roster size (12→2h, 18→3h, 24→4h).
  */
 export function computeBookingWindowCandidates(
   db,
@@ -62,6 +106,7 @@ export function computeBookingWindowCandidates(
     rosterCapacity,
     dateStartStr,
     dateEndStr,
+    includedWeekdays = null,
     maxResults = 40,
   }
 ) {
@@ -75,8 +120,12 @@ export function computeBookingWindowCandidates(
 
   const slotMaps = bookingRosterSlotSets(db, runId, rosterUserIdsBooking);
 
-  const days = eachDayInclusiveStr(dateStartStr, dateEndStr);
-  const durations = [2, 3, 4];
+  const weekdays = parseIncludedWeekdays(includedWeekdays);
+  const days = eachDayInclusiveStr(dateStartStr, dateEndStr).filter((dayStr) =>
+    dayInRunSchedule(dayStr, dateStartStr, dateEndStr, weekdays)
+  );
+  const dur = bookingDurationHoursForSize(rosterCapacity);
+  const durations = [dur];
 
   /** @type {Map<string, { slotKeys: string[], durationHours: number, rosterCoverageCount: number, rosterCapacity: number }>} */
   const byKey = new Map();
@@ -137,38 +186,137 @@ export function computeBookingWindowCandidates(
   }));
 }
 
+function dayStrFromSlotKey(slotKey) {
+  const m = /^(\d{4}-\d{2}-\d{2})T/.exec(String(slotKey || ""));
+  return m ? m[1] : "";
+}
+
+function formatDateHeading(dayStr) {
+  const d = new Date(String(dayStr) + "T12:00:00");
+  if (Number.isNaN(d.getTime())) return dayStr;
+  return d.toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 /**
- * One “rental option” = same wall-clock start (first hourly key); variants are 2/3/4h lengths from that start.
+ * Rental options grouped by calendar date, each with roster + waitlist (save-order).
  */
-export function groupBookingRentalsByStart(candidates) {
+export function buildBookingRentalsByDate(
+  candidates,
+  { saveOrderedUserIds, slotsByUser, userInfoById }
+) {
   if (!candidates?.length) return [];
-  const byStart = new Map();
+  const byDate = new Map();
+  let optionSeq = 0;
   for (const c of candidates) {
     const keys = c.slotKeys;
     if (!Array.isArray(keys) || !keys.length) continue;
     const start = normalizeSlotKey(String(keys[0]));
-    if (!start) continue;
-    if (!byStart.has(start)) byStart.set(start, []);
-    byStart.get(start).push({
-      slotKeys: c.slotKeys,
-      durationHours: c.durationHours,
-      rosterCoverageCount: c.rosterCoverageCount,
-      rosterCapacity: c.rosterCapacity,
-      rosterMissingCount: c.rosterMissingCount ?? 0,
-      missingMemberNamesPreview: c.missingMemberNamesPreview ?? [],
+    const date = dayStrFromSlotKey(start);
+    if (!date) continue;
+    const { roster, waitlist, matchingCount } = coalitionRosterWaitlistForWindow(
+      keys,
+      c.rosterCapacity,
+      saveOrderedUserIds,
+      slotsByUser,
+      userInfoById
+    );
+    if (matchingCount < Number(c.rosterCapacity)) continue;
+    optionSeq += 1;
+    const option = {
+      optionNumber: optionSeq,
+      rosterCapacity: Number(c.rosterCapacity),
+      durationHours: Number(c.durationHours),
+      slotKeys: keys,
+      slotStart: start,
+      slotEnd: keys[keys.length - 1],
+      rosterCoverageCount: matchingCount,
+      roster,
+      waitlist,
+    };
+    if (!byDate.has(date)) {
+      byDate.set(date, {
+        date,
+        dateLabel: formatDateHeading(date),
+        options: [],
+      });
+    }
+    byDate.get(date).options.push(option);
+  }
+  const out = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  for (const g of out) {
+    g.options.sort((a, b) => String(a.slotStart).localeCompare(String(b.slotStart)));
+  }
+  return out;
+}
+
+/** @deprecated Use buildBookingRentalsByDate — kept for callers expecting start-grouped shape. */
+export function groupBookingRentalsByStart(candidates) {
+  if (!candidates?.length) return [];
+  return candidates.map((c, idx) => ({
+    optionNumber: idx + 1,
+    startSlotKey: normalizeSlotKey(String(c.slotKeys?.[0] || "")),
+    windows: [
+      {
+        slotKeys: c.slotKeys,
+        durationHours: c.durationHours,
+        rosterCoverageCount: c.rosterCoverageCount,
+        rosterCapacity: c.rosterCapacity,
+        rosterMissingCount: c.rosterMissingCount ?? 0,
+        missingMemberNamesPreview: c.missingMemberNamesPreview ?? [],
+      },
+    ],
+  }));
+}
+
+/** Flatten date-grouped rentals into legacy { optionNumber, windows[] } for tag matching. */
+export function rentalOptionsFromDateGroups(dateGroups) {
+  const out = [];
+  for (const dg of dateGroups || []) {
+    for (const opt of dg.options || []) {
+      out.push({
+        optionNumber: Number(opt.optionNumber),
+        windows: [
+          {
+            slotKeys: opt.slotKeys,
+            rosterCapacity: opt.rosterCapacity,
+            durationHours: opt.durationHours,
+          },
+        ],
+      });
+    }
+  }
+  return out;
+}
+
+export function mergeBookingRentalsByDate(bySize) {
+  const byDate = new Map();
+  for (const size of [12, 18, 24]) {
+    const groups = bySize?.[size] ?? bySize?.[String(size)] ?? [];
+    for (const g of groups) {
+      if (!byDate.has(g.date)) {
+        byDate.set(g.date, {
+          date: g.date,
+          dateLabel: g.dateLabel,
+          options: [],
+        });
+      }
+      byDate.get(g.date).options.push(...(g.options || []));
+    }
+  }
+  const out = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  for (const g of out) {
+    g.options.sort((a, b) => {
+      const t = String(a.slotStart).localeCompare(String(b.slotStart));
+      if (t !== 0) return t;
+      return Number(a.rosterCapacity) - Number(b.rosterCapacity);
     });
   }
-  const sortedStarts = [...byStart.keys()].sort();
-  return sortedStarts.map((startSlotKey, idx) => {
-    const windows = [...byStart.get(startSlotKey)].sort(
-      (a, b) => Number(b.durationHours) - Number(a.durationHours)
-    );
-    return {
-      optionNumber: idx + 1,
-      startSlotKey,
-      windows,
-    };
-  });
+  return out;
 }
 
 /** Viewer’s saved slots fully cover at least one window variant inside a rental group. */
@@ -237,4 +385,37 @@ export function splitViewerRentalMatchByWaitlist(
     else fits.push(optNum);
   }
   return { waitlisted, fits };
+}
+
+/**
+ * Per-member yellow (waitlist) / green (available) tags across 12 / 18 / 24 booking windows.
+ * Waitlist: matched a window where every hour already had `size` prior savers (save order).
+ * Available: matched a window that is not fully saturated at that size.
+ */
+export function memberRentalStatusForSizes(
+  userSlotKeys,
+  groupsBySize,
+  slotCountsBeforeUser,
+  sizes = [12, 18, 24]
+) {
+  const waitlistedSizes = [];
+  const fitsSizes = [];
+  for (const size of sizes) {
+    const dateGroups = groupsBySize?.[size] ?? groupsBySize?.[String(size)] ?? [];
+    const groups = rentalOptionsFromDateGroups(dateGroups);
+    const { waitlisted, fits } = splitViewerRentalMatchByWaitlist(
+      userSlotKeys,
+      groups,
+      slotCountsBeforeUser,
+      size
+    );
+    if (waitlisted.length > 0) waitlistedSizes.push(size);
+    if (fits.length > 0) fitsSizes.push(size);
+  }
+  return {
+    waitlistedSizes,
+    fitsSizes,
+    hourWaitlisted: waitlistedSizes.length > 0,
+    fitsRental: fitsSizes.length > 0,
+  };
 }

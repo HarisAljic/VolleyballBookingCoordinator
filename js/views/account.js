@@ -1,6 +1,6 @@
 import { escapeHtml } from "../lib/html.js";
 import { layout, showToast } from "../layout.js";
-import { refreshUser } from "../auth-nav.js";
+import { applyAuthSession, refreshUser } from "../auth-nav.js";
 import { state, setQuery } from "../state.js";
 import { api } from "../api.js";
 import { renderHome } from "./home.js";
@@ -28,7 +28,7 @@ export async function renderAccount() {
   );
   document.getElementById("btn-logout")?.addEventListener("click", async () => {
     await api("/api/auth/logout", { method: "POST" });
-    state.user = null;
+    applyAuthSession({ user: null, defaultRun: null });
     showToast("Signed out.");
     setQuery({});
     await renderHome();

@@ -37,8 +37,8 @@ function overlaps(aStart, aEnd, bStart, bEnd) {
   return as < be && ae > bs;
 }
 
-function isHalfCourtAsset(a) {
-  if (!a || typeof a !== "object") return false;
+function assetLabelText(a) {
+  if (!a || typeof a !== "object") return "";
   const pieces = [];
   for (const k of Object.keys(a)) {
     const lk = String(k).toLowerCase();
@@ -46,15 +46,28 @@ function isHalfCourtAsset(a) {
     const v = a[k];
     if (typeof v === "string" && v.length && v.length < 400) pieces.push(v);
   }
-  const label = pieces.join(" ").toLowerCase();
-  return label.includes("half");
+  return pieces.join(" ").toLowerCase();
 }
 
-/** Full-size courts only (excludes Skedda assets with "half" in name / details). */
-function collectFullCourtSpaceIds(assets) {
+function isHalfCourtAsset(a) {
+  return assetLabelText(a).includes("half");
+}
+
+/** Kings Court day view also lists sport-type rows (e.g. Basketball, Volleyball) — not bookable courts. */
+function isKingsOakvilleVolleyballCourt(a) {
+  return assetLabelText(a).includes("full court");
+}
+
+function isVolleyballBookableSpace(a, venueId) {
+  if (venueId === "kings-oakville") return isKingsOakvilleVolleyballCourt(a);
+  return !isHalfCourtAsset(a);
+}
+
+/** Bookable volleyball courts for a venue (half courts and non-court Skedda rows excluded). */
+function collectVolleyballCourtSpaceIds(assets, venueId) {
   const ids = [];
   for (const a of assets || []) {
-    if (a?.id == null || isHalfCourtAsset(a)) continue;
+    if (a?.id == null || !isVolleyballBookableSpace(a, venueId)) continue;
     ids.push(String(a.id));
   }
   return [...new Set(ids)];
@@ -394,7 +407,7 @@ export async function checkSkeddaVenues(slotStartIso, slotEndIso) {
           }
         }
 
-        let spaceIds = collectFullCourtSpaceIds(webs?.assets);
+        let spaceIds = collectVolleyballCourtSpaceIds(webs?.assets, venue.id);
         if (hoursAvail) {
           spaceIds = spaceIds.filter((id) =>
             spaceWithinHoursOfAvailability(id, hoursAvail, slotStartIso, slotEndIso)

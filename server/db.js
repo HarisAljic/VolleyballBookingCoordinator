@@ -31,9 +31,11 @@ export function openDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       creator_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
-      capacity INTEGER NOT NULL CHECK (capacity IN (12, 18, 24)),
+      capacity INTEGER NOT NULL DEFAULT 12 CHECK (capacity IN (12, 18, 24)),
+      target_roster_sizes TEXT,
       date_start TEXT NOT NULL,
       date_end TEXT NOT NULL,
+      included_weekdays TEXT,
       run_code TEXT NOT NULL UNIQUE,
       share_token TEXT NOT NULL UNIQUE,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -68,5 +70,25 @@ export function openDb() {
     `UPDATE availability SET first_saved_at = updated_at
      WHERE first_saved_at IS NULL OR TRIM(first_saved_at) = ''`
   ).run();
+  const runCols = db.prepare("PRAGMA table_info(runs)").all();
+  if (!runCols.some((c) => c.name === "included_weekdays")) {
+    db.exec("ALTER TABLE runs ADD COLUMN included_weekdays TEXT");
+  }
+  db.prepare(
+    `UPDATE runs SET included_weekdays = ?
+     WHERE included_weekdays IS NULL OR TRIM(included_weekdays) = ''`
+  ).run(JSON.stringify([0, 1, 2, 3, 4, 5, 6]));
+  const runCols2 = db.prepare("PRAGMA table_info(runs)").all();
+  if (!runCols2.some((c) => c.name === "target_roster_sizes")) {
+    db.exec("ALTER TABLE runs ADD COLUMN target_roster_sizes TEXT");
+  }
+  db.prepare(
+    `UPDATE runs SET target_roster_sizes = ?
+     WHERE target_roster_sizes IS NULL OR TRIM(target_roster_sizes) = ''`
+  ).run(JSON.stringify([12, 18, 24]));
+  const runCols3 = db.prepare("PRAGMA table_info(runs)").all();
+  if (!runCols3.some((c) => c.name === "is_default")) {
+    db.exec("ALTER TABLE runs ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0");
+  }
   return db;
 }

@@ -1,4 +1,4 @@
-export const state = { user: null, runToken: null, joinCode: null };
+export const state = { user: null, defaultRun: null, runToken: null, joinCode: null };
 
 export function readQuery() {
   const q = new URLSearchParams(window.location.search);

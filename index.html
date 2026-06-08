@@ -158,6 +158,28 @@
         window.addEventListener("vb-navigated-narrow", function () {
           if (narrowNavMq.matches) setExpanded(false);
         });
+
+        /** Collapse when the user taps page content; keep open for action buttons (not calendar / member tiles). */
+        function clickShouldCollapseSidebar(target) {
+          if (!(target instanceof Element)) return false;
+          if (target.closest("#menu-toggle")) return false;
+          var btn = target.closest("button");
+          if (btn) {
+            return (
+              btn.classList.contains("slot-cell") || btn.classList.contains("member-tile")
+            );
+          }
+          return true;
+        }
+
+        document.addEventListener(
+          "click",
+          function (e) {
+            if (!expanded) return;
+            if (clickShouldCollapseSidebar(e.target)) setExpanded(false);
+          },
+          true
+        );
       })();
     </script>
     <script type="module" src="/js/main.js"></script>

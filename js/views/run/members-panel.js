@@ -103,6 +103,41 @@ export function renderMemberRows(
     <div id="member-avail-tooltip" class="pointer-events-none fixed z-50 hidden max-w-[16rem] rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-xs text-slate-200 shadow-xl" role="tooltip"></div>`;
 }
 
+let memberTileListenersAbort = null;
+
+function bindMemberTileDismissListeners(hideTip) {
+  memberTileListenersAbort?.abort();
+  memberTileListenersAbort = new AbortController();
+  const { signal } = memberTileListenersAbort;
+
+  const onScrollDismiss = () => {
+    if (!document.getElementById("member-avail-tooltip")?.classList.contains("hidden")) {
+      hideTip();
+    }
+  };
+
+  window.addEventListener("scroll", onScrollDismiss, { passive: true, signal });
+  document
+    .getElementById("weekend-cal-stack")
+    ?.addEventListener("scroll", onScrollDismiss, { passive: true, signal });
+  document
+    .querySelectorAll("#calendar-wrap .overflow-y-auto, #calendar-wrap .overflow-x-auto")
+    .forEach((el) => el.addEventListener("scroll", onScrollDismiss, { passive: true, signal }));
+
+  document.addEventListener(
+    "click",
+    (e) => {
+      const pinned = document.querySelector(".member-tile[data-pinned]");
+      if (!pinned) return;
+      const t = e.target;
+      const tip = document.getElementById("member-avail-tooltip");
+      if (t instanceof Node && (pinned.contains(t) || tip?.contains(t))) return;
+      hideTip();
+    },
+    { capture: true, signal }
+  );
+}
+
 /** Hover / tap tooltips for member tiles; updates viewer tile when grid selection changes. */
 export function bindMemberTiles({ run, selected, slotsByUserId }) {
   const tip = document.getElementById("member-avail-tooltip");
@@ -113,6 +148,7 @@ export function bindMemberTiles({ run, selected, slotsByUserId }) {
 
   const hideTip = () => {
     tip.classList.add("hidden");
+    if (pinnedTile) pinnedTile.removeAttribute("data-pinned");
     pinnedTile = null;
   };
 
@@ -146,8 +182,14 @@ export function bindMemberTiles({ run, selected, slotsByUserId }) {
     tip.style.transform = "translateY(-100%)";
     tip.classList.remove("hidden");
 
-    if (pin) pinnedTile = el;
+    if (pin) {
+      if (pinnedTile && pinnedTile !== el) pinnedTile.removeAttribute("data-pinned");
+      pinnedTile = el;
+      el.setAttribute("data-pinned", "1");
+    }
   };
+
+  bindMemberTileDismissListeners(hideTip);
 
   grid.querySelectorAll(".member-tile").forEach((el) => {
     el.addEventListener("mouseenter", () => {
@@ -169,17 +211,6 @@ export function bindMemberTiles({ run, selected, slotsByUserId }) {
       showTipFor(el, { pin: true });
     });
   });
-
-  document.addEventListener(
-    "click",
-    (e) => {
-      if (!pinnedTile) return;
-      const t = e.target;
-      if (t instanceof Node && (pinnedTile.contains(t) || tip.contains(t))) return;
-      hideTip();
-    },
-    true
-  );
 
   const refreshViewerTile = () => {
     if (!run.viewerId) return;

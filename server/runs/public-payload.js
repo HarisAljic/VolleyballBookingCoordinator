@@ -107,23 +107,10 @@ export function buildPublicRunPayload(run, user, { diag = false } = {}) {
       bookingRentalGroupsBySize,
       countsBefore
     );
-    // Join-order waitlist: if you're beyond the first N joiners for a size, you are waitlisted
-    // for that size even if your saved windows match.
-    const hasSavedAnyAvailability = Array.isArray(slots) && slots.length > 0;
-    const joinIdx = orderedIds.indexOf(Number(uid));
-    const joinWaitlistedSizes = [];
-    if (hasSavedAnyAvailability) {
-      for (const size of ROSTER_SIZES) {
-        if (joinIdx >= 0 && joinIdx >= Number(size)) joinWaitlistedSizes.push(Number(size));
-      }
-    }
-    const mergedWaitlisted = [
-      ...new Set([...(tags.waitlistedSizes || []), ...joinWaitlistedSizes]),
-    ].sort((a, b) => a - b);
     const merged = {
       ...tags,
-      waitlistedSizes: mergedWaitlisted,
-      hourWaitlisted: mergedWaitlisted.length > 0,
+      waitlistedSizes: [...(tags.waitlistedSizes || [])].sort((a, b) => a - b),
+      hourWaitlisted: (tags.waitlistedSizes || []).length > 0,
     };
     memberRentalTags.set(uid, merged);
     if (merged.hourWaitlisted) hourWaitlistCount++;

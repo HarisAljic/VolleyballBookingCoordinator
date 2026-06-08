@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { normalizeSlotKey } from "../slotKeys.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = process.env.DB_PATH || path.join(__dirname, "..", "data", "app.db");
@@ -54,6 +55,7 @@ export function openDb() {
       slots_json TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       first_saved_at TEXT,
+      slot_saved_at_json TEXT,
       PRIMARY KEY (run_id, user_id)
     );
 
@@ -70,6 +72,42 @@ export function openDb() {
     `UPDATE availability SET first_saved_at = updated_at
      WHERE first_saved_at IS NULL OR TRIM(first_saved_at) = ''`
   ).run();
+  const avCols2 = db.prepare("PRAGMA table_info(availability)").all();
+  if (!avCols2.some((c) => c.name === "slot_saved_at_json")) {
+    db.exec("ALTER TABLE availability ADD COLUMN slot_saved_at_json TEXT");
+  }
+  const backfillSlotSavedAt = db.prepare(
+    `UPDATE availability SET slot_saved_at_json = ?
+     WHERE run_id = ? AND user_id = ?
+       AND (slot_saved_at_json IS NULL OR TRIM(slot_saved_at_json) = '' OR slot_saved_at_json = '{}')`
+  );
+  for (const row of db
+    .prepare(
+      "SELECT run_id, user_id, slots_json, first_saved_at, updated_at FROM availability"
+    )
+    .all()) {
+    let slots = [];
+    try {
+      slots = JSON.parse(row.slots_json || "[]");
+    } catch {
+      slots = [];
+    }
+    if (!Array.isArray(slots) || !slots.length) continue;
+    const ts = String(row.first_saved_at || row.updated_at || "").trim();
+    if (!ts) continue;
+    const savedAt = {};
+    for (const s of slots) {
+      const k = normalizeSlotKey(String(s));
+      if (k) savedAt[k] = ts;
+    }
+    if (Object.keys(savedAt).length) {
+      backfillSlotSavedAt.run(
+        JSON.stringify(savedAt),
+        row.run_id,
+        row.user_id
+      );
+    }
+  }
   const runCols = db.prepare("PRAGMA table_info(runs)").all();
   if (!runCols.some((c) => c.name === "included_weekdays")) {
     db.exec("ALTER TABLE runs ADD COLUMN included_weekdays TEXT");

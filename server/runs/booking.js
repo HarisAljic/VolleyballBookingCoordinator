@@ -8,24 +8,21 @@ import {
   ROSTER_SIZES,
 } from "../../roster-tiers.js";
 import { db } from "../db-singleton.js";
+import { loadSlotSavedAtByUser, runIncludedWeekdays } from "./availability.js";
 import { orderedMemberUserIds } from "./repository.js";
-import { runIncludedWeekdays } from "./availability.js";
 
 export function buildBookingRentalGroupsBySize(runId, orderedIds, run, wlLocked, members) {
   const includedWeekdays = runIncludedWeekdays(run);
   const allIds = orderedMemberUserIds(runId);
   const slotsByUser = bookingRosterSlotSets(db, runId, allIds);
-  // Roster vs waitlist within each rental option is based on JOIN ORDER.
-  // This ensures that once a size is full (e.g. 18), later joiners are waitlisted
-  // even if they saved availability early.
-  const saveOrderedUserIds = orderedIds;
+  const slotSavedAtByUser = loadSlotSavedAtByUser(runId, allIds);
   const userInfoById = new Map(
     (members || []).map((m) => [
       Number(m.id),
       { firstName: m.first_name, lastName: m.last_name },
     ])
   );
-  const enrichCtx = { saveOrderedUserIds, slotsByUser, userInfoById };
+  const enrichCtx = { slotsByUser, userInfoById, slotSavedAtByUser };
   const bySize = {};
   for (const size of ROSTER_SIZES) {
     if (orderedIds.length < size) {

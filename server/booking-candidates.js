@@ -55,16 +55,35 @@ export function bookingRosterSlotSets(db, runId, rosterUserIdsOrdered) {
   return map;
 }
 
+/** Latest per-slot save time when a member fully covers every hour in the window. */
+export function windowSaveTimestamp(slotKeys, slotSavedAtMap) {
+  const keys = (slotKeys || [])
+    .map((k) => normalizeSlotKey(String(k)))
+    .filter(Boolean);
+  if (!keys.length) return "";
+  let maxTs = "";
+  for (const k of keys) {
+    const ts =
+      slotSavedAtMap instanceof Map
+        ? slotSavedAtMap.get(k)
+        : slotSavedAtMap?.[k];
+    if (!ts) return "";
+    const s = String(ts);
+    if (!maxTs || s.localeCompare(maxTs) > 0) maxTs = s;
+  }
+  return maxTs;
+}
+
 /**
- * Members who saved every hour in `slotKeys`, ordered by first-save time.
+ * Members who saved every hour in `slotKeys`, ordered by when they completed that window.
  * First `rosterCapacity` = roster; rest = waitlist with rank (1-based).
  */
 export function coalitionRosterWaitlistForWindow(
   slotKeys,
   rosterCapacity,
-  saveOrderedUserIds,
   slotsByUser,
-  userInfoById
+  userInfoById,
+  slotSavedAtByUser
 ) {
   const cap = Math.max(1, Number(rosterCapacity)) || 1;
   const keys = (slotKeys || [])
@@ -74,11 +93,21 @@ export function coalitionRosterWaitlistForWindow(
     return { roster: [], waitlist: [], matchingCount: 0 };
   }
   const matching = [];
-  for (const uid of saveOrderedUserIds || []) {
-    const set = slotsByUser.get(Number(uid)) || slotsByUser.get(uid);
+  for (const [uid, set] of slotsByUser.entries()) {
     if (!set || !keys.every((k) => set.has(k))) continue;
-    matching.push(Number(uid));
+    const savedAtMap =
+      slotSavedAtByUser?.get(Number(uid)) ||
+      slotSavedAtByUser?.get(uid) ||
+      new Map();
+    const windowTs = windowSaveTimestamp(keys, savedAtMap);
+    if (!windowTs) continue;
+    matching.push({ uid: Number(uid), windowTs });
   }
+  matching.sort((a, b) => {
+    const t = a.windowTs.localeCompare(b.windowTs);
+    if (t !== 0) return t;
+    return a.uid - b.uid;
+  });
   const pick = (uid) => {
     const u = userInfoById.get(Number(uid)) || userInfoById.get(uid) || {};
     return {
@@ -87,8 +116,9 @@ export function coalitionRosterWaitlistForWindow(
       lastName: u.lastName ?? "",
     };
   };
-  const roster = matching.slice(0, cap).map(pick);
-  const waitlist = matching.slice(cap).map((uid, i) => ({
+  const orderedIds = matching.map((m) => m.uid);
+  const roster = orderedIds.slice(0, cap).map(pick);
+  const waitlist = orderedIds.slice(cap).map((uid, i) => ({
     ...pick(uid),
     waitlistRank: i + 1,
   }));
@@ -207,7 +237,7 @@ function formatDateHeading(dayStr) {
  */
 export function buildBookingRentalsByDate(
   candidates,
-  { saveOrderedUserIds, slotsByUser, userInfoById }
+  { slotsByUser, userInfoById, slotSavedAtByUser }
 ) {
   if (!candidates?.length) return [];
   const byDate = new Map();
@@ -221,9 +251,9 @@ export function buildBookingRentalsByDate(
     const { roster, waitlist, matchingCount } = coalitionRosterWaitlistForWindow(
       keys,
       c.rosterCapacity,
-      saveOrderedUserIds,
       slotsByUser,
-      userInfoById
+      userInfoById,
+      slotSavedAtByUser
     );
     if (matchingCount < Number(c.rosterCapacity)) continue;
     optionSeq += 1;

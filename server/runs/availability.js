@@ -197,15 +197,117 @@ function loadOrderedAvailabilitySlots(runId) {
 }
 
 export function slotCountsBeforeUserInSaveOrder(runId, userId) {
-  const { orderedUids, slotsByUser } = loadOrderedAvailabilitySlots(runId);
+  const rows = db
+    .prepare(
+      `SELECT user_id, slot_saved_at_json FROM availability WHERE run_id = ?`
+    )
+    .all(runId);
+  const allByUser = new Map();
+  for (const r of rows) {
+    allByUser.set(Number(r.user_id), parseSlotSavedAtMap(r.slot_saved_at_json));
+  }
+  const viewerMap = allByUser.get(Number(userId)) || new Map();
   const slotCounts = new Map();
-  for (const uid of orderedUids) {
-    if (Number(uid) === Number(userId)) return slotCounts;
-    for (const k of slotsByUser.get(uid) || []) {
-      slotCounts.set(k, (slotCounts.get(k) || 0) + 1);
+  const viewerId = Number(userId);
+  for (const [slotKey, viewerTs] of viewerMap) {
+    let count = 0;
+    for (const [uid, userMap] of allByUser) {
+      if (uid === viewerId) continue;
+      const ts = userMap.get(slotKey);
+      if (!ts) continue;
+      if (ts < viewerTs || (ts === viewerTs && uid < viewerId)) count++;
     }
+    slotCounts.set(slotKey, count);
   }
   return slotCounts;
+}
+
+function parseSlotSavedAtMap(json) {
+  let raw = {};
+  try {
+    raw = JSON.parse(json || "{}");
+  } catch {
+    raw = {};
+  }
+  if (!raw || typeof raw !== "object") return new Map();
+  const out = new Map();
+  for (const [k, v] of Object.entries(raw)) {
+    const nk = normalizeSlotKey(String(k));
+    const ts = String(v || "").trim();
+    if (nk && ts) out.set(nk, ts);
+  }
+  return out;
+}
+
+export function loadSlotSavedAtByUser(runId, userIds) {
+  const map = new Map();
+  if (!userIds?.length) return map;
+  const placeholders = userIds.map(() => "?").join(",");
+  const rows = db
+    .prepare(
+      `SELECT user_id, slot_saved_at_json FROM availability
+       WHERE run_id = ? AND user_id IN (${placeholders})`
+    )
+    .all(runId, ...userIds);
+  for (const r of rows) {
+    map.set(Number(r.user_id), parseSlotSavedAtMap(r.slot_saved_at_json));
+  }
+  return map;
+}
+
+export function saveAvailability(runId, userId, slotsJson) {
+  const existing = db
+    .prepare(
+      `SELECT slots_json, slot_saved_at_json FROM availability
+       WHERE run_id = ? AND user_id = ?`
+    )
+    .get(runId, userId);
+
+  let newSlots = [];
+  try {
+    newSlots = JSON.parse(slotsJson || "[]");
+  } catch {
+    newSlots = [];
+  }
+  const normalizedNew = [
+    ...new Set(
+      (Array.isArray(newSlots) ? newSlots : [])
+        .map((s) => normalizeSlotKey(String(s)))
+        .filter(Boolean)
+    ),
+  ];
+
+  const oldSavedAt = existing ? parseSlotSavedAtMap(existing.slot_saved_at_json) : new Map();
+  let oldSlots = new Set();
+  if (existing) {
+    try {
+      const raw = JSON.parse(existing.slots_json || "[]");
+      oldSlots = new Set(
+        (Array.isArray(raw) ? raw : [])
+          .map((s) => normalizeSlotKey(String(s)))
+          .filter(Boolean)
+      );
+    } catch {
+      oldSlots = new Set();
+    }
+  }
+
+  const now = db.prepare("SELECT datetime('now') AS ts").get().ts;
+  const slotSavedAt = {};
+  for (const k of normalizedNew) {
+    const prev = oldSavedAt.get(k);
+    slotSavedAt[k] = prev && oldSlots.has(k) ? prev : now;
+  }
+
+  db.prepare(
+    `INSERT INTO availability (run_id, user_id, slots_json, updated_at, first_saved_at, slot_saved_at_json)
+     VALUES (?, ?, ?, datetime('now'), datetime('now'), ?)
+     ON CONFLICT(run_id, user_id) DO UPDATE SET
+       slots_json = excluded.slots_json,
+       updated_at = excluded.updated_at,
+       first_saved_at = COALESCE(availability.first_saved_at, excluded.first_saved_at),
+       slot_saved_at_json = excluded.slot_saved_at_json`
+  ).run(runId, userId, JSON.stringify(normalizedNew), JSON.stringify(slotSavedAt));
 }
 
 export function memberSlotsFromRow(runId, userId, includedWeekdays) {
@@ -228,16 +330,6 @@ export function memberSlotsFromRow(runId, userId, includedWeekdays) {
   }
 }
 
-export function saveAvailability(runId, userId, slotsJson) {
-  db.prepare(
-    `INSERT INTO availability (run_id, user_id, slots_json, updated_at, first_saved_at)
-     VALUES (?, ?, ?, datetime('now'), datetime('now'))
-     ON CONFLICT(run_id, user_id) DO UPDATE SET
-       slots_json = excluded.slots_json,
-       updated_at = excluded.updated_at,
-       first_saved_at = COALESCE(availability.first_saved_at, excluded.first_saved_at)`
-  ).run(runId, userId, slotsJson);
-}
 
 export function countMembersWithAvailability(runId, userIds) {
   let n = 0;

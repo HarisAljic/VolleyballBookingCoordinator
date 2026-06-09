@@ -359,8 +359,25 @@ function spaceWithinHoursOfAvailability(spaceId, hoursOfAvailability, slotStartI
  * @param {string} slotStartIso
  * @param {string} slotEndIso
  */
+function formatBrowserLaunchError(err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/libglib|shared object|cannot open shared object|playwright install/i.test(msg)) {
+    return (
+      "Playwright Chromium could not start: missing Linux system libraries in this container. " +
+      "Redeploy using the project Dockerfile (see DEPLOY-RAILWAY.md). " +
+      `Details: ${msg}`
+    );
+  }
+  return msg;
+}
+
 export async function checkSkeddaVenues(slotStartIso, slotEndIso) {
-  const browser = await chromium.launch({ headless: true });
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+  } catch (err) {
+    throw new Error(formatBrowserLaunchError(err));
+  }
   const results = [];
 
   try {

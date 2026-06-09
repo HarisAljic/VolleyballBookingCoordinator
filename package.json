@@ -17,7 +17,8 @@
     "seed:june2026": "node server/seed-june-2026.mjs",
     "kick:bench": "node server/kick-bench-waitlist-demo.mjs",
     "db:reset": "node server/reset-db.mjs",
-    "test": "node --test default-run-month.test.mjs booking-roster-waitlist.test.mjs"
+    "test": "node --test default-run-month.test.mjs booking-roster-waitlist.test.mjs",
+    "postinstall": "node -e \"if(process.env.SKIP_PLAYWRIGHT_INSTALL){process.exit(0)}\" && playwright install chromium"
   },
   "engines": {
     "node": ">=18"

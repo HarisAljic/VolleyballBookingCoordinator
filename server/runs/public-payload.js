@@ -7,7 +7,8 @@ import {
   ROSTER_SIZES,
 } from "../../roster-tiers.js";
 import {
-  memberRentalStatusForSizes,
+  coalitionWaitlistedUserIdsFromRentals,
+  memberCoalitionRentalStatus,
   mergeBookingRentalsByDate,
   rentalOptionsFromDateGroups,
   viewerMatchedRentalOptionNumbers as computeViewerMatchedRentalNumbers,
@@ -19,10 +20,8 @@ import {
   canSetAvailability,
   countMembersWithAvailability,
   loadMemberAvailabilityHeatmap,
-  memberSlotsFromRow,
   runIncludedWeekdays,
   schedulingWaitlistLocked,
-  slotCountsBeforeUserInSaveOrder,
 } from "./availability.js";
 import {
   listMembers,
@@ -98,23 +97,19 @@ export function buildPublicRunPayload(run, user, { diag = false } = {}) {
   );
 
   const memberRentalTags = new Map();
-  let hourWaitlistCount = 0;
   for (const uid of orderedIds) {
-    const slots = memberSlotsFromRow(run.id, uid, includedWeekdays);
-    const countsBefore = slotCountsBeforeUserInSaveOrder(run.id, uid);
-    const tags = memberRentalStatusForSizes(
-      slots,
-      bookingRentalGroupsBySize,
-      countsBefore
-    );
+    const tags = memberCoalitionRentalStatus(uid, bookingRentalGroupsBySize);
     const merged = {
       ...tags,
       waitlistedSizes: [...(tags.waitlistedSizes || [])].sort((a, b) => a - b),
       hourWaitlisted: (tags.waitlistedSizes || []).length > 0,
     };
     memberRentalTags.set(uid, merged);
-    if (merged.hourWaitlisted) hourWaitlistCount++;
   }
+  const hourWaitlistCount = coalitionWaitlistedUserIdsFromRentals(
+    bookingRentalsByDate,
+    { futureOnly: true }
+  ).size;
 
   const viewerTags =
     mine && user ? memberRentalTags.get(Number(user.id)) : null;

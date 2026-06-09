@@ -415,10 +415,75 @@ export function splitViewerRentalMatchByWaitlist(
   return { waitlisted, fits };
 }
 
+function slotStartIsFuture(slotStart) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):00:00$/.exec(
+    String(slotStart || "")
+  );
+  if (!m) return true;
+  const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], 0, 0, 0);
+  return !Number.isNaN(d.getTime()) && d.getTime() >= Date.now();
+}
+
+/** Unique user IDs on coalition waitlists across rental options. */
+export function coalitionWaitlistedUserIdsFromRentals(
+  bookingRentalsByDate,
+  { futureOnly = false } = {}
+) {
+  const ids = new Set();
+  for (const dg of bookingRentalsByDate || []) {
+    for (const opt of dg.options || []) {
+      const start = normalizeSlotKey(
+        String(opt.slotKeys?.[0] || opt.slotStart || "")
+      );
+      if (futureOnly && !slotStartIsFuture(start)) continue;
+      for (const p of opt.waitlist || []) {
+        const uid = Number(p.userId);
+        if (Number.isFinite(uid)) ids.add(uid);
+      }
+    }
+  }
+  return ids;
+}
+
 /**
- * Per-member yellow (waitlist) / green (available) tags across 12 / 18 / 24 booking windows.
- * Waitlist: matched a window where every hour already had `size` prior savers (save order).
- * Available: matched a window that is not fully saturated at that size.
+ * Per-member roster/waitlist tags from coalition save-order (same source as rental tiles).
+ * Waitlist: on `waitlist` for a bookable window at that size; available: on `roster`.
+ */
+export function memberCoalitionRentalStatus(
+  userId,
+  groupsBySize,
+  sizes = [12, 18, 24]
+) {
+  const uid = Number(userId);
+  const waitlistedSizes = [];
+  const fitsSizes = [];
+  for (const size of sizes) {
+    const dateGroups = groupsBySize?.[size] ?? groupsBySize?.[String(size)] ?? [];
+    let waitlisted = false;
+    let fits = false;
+    for (const dg of dateGroups || []) {
+      for (const opt of dg.options || []) {
+        if ((opt.waitlist || []).some((p) => Number(p.userId) === uid)) {
+          waitlisted = true;
+        }
+        if ((opt.roster || []).some((p) => Number(p.userId) === uid)) {
+          fits = true;
+        }
+      }
+    }
+    if (waitlisted) waitlistedSizes.push(size);
+    if (fits) fitsSizes.push(size);
+  }
+  return {
+    waitlistedSizes,
+    fitsSizes,
+    hourWaitlisted: waitlistedSizes.length > 0,
+    fitsRental: fitsSizes.length > 0,
+  };
+}
+
+/**
+ * @deprecated Per-slot saturation tags — use memberCoalitionRentalStatus for UI counts.
  */
 export function memberRentalStatusForSizes(
   userSlotKeys,

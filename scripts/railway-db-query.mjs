@@ -100,8 +100,95 @@ async function runBookingQuery(arg, { waitlistOnly = false } = {}) {
   });
 }
 
+async function runWaitlistCompareQuery(arg) {
+  const { runId: runIdArg } = parseBookingArgs(arg || "3");
+  const { db } = await import("../server/db-singleton.js");
+  const { buildBookingRentalGroupsBySize } = await import("../server/runs/booking.js");
+  const {
+    coalitionWaitlistedUserIdsFromRentals,
+    memberCoalitionRentalStatus,
+    memberRentalStatusForSizes,
+    mergeBookingRentalsByDate,
+  } = await import("../server/booking-candidates.js");
+  const { listMembers, orderedMemberUserIds } = await import("../server/runs/repository.js");
+  const {
+    memberSlotsFromRow,
+    runIncludedWeekdays,
+    schedulingWaitlistLocked,
+    slotCountsBeforeUserInSaveOrder,
+  } = await import("../server/runs/availability.js");
+
+  const run = runIdArg
+    ? db
+        .prepare(
+          `SELECT id, title, capacity, date_start, date_end, run_code, is_default, included_weekdays
+           FROM runs WHERE id = ?`
+        )
+        .get(runIdArg)
+    : db
+        .prepare(
+          `SELECT id, title, capacity, date_start, date_end, run_code, is_default, included_weekdays
+           FROM runs WHERE is_default = 1 ORDER BY id DESC LIMIT 1`
+        )
+        .get();
+  if (!run) {
+    console.error(runIdArg ? `Run not found: ${runIdArg}` : "No default run found");
+    process.exit(1);
+  }
+
+  const orderedIds = orderedMemberUserIds(run.id);
+  const members = listMembers(run.id);
+  const wlLocked = schedulingWaitlistLocked(run.id);
+  const includedWeekdays = runIncludedWeekdays(run);
+  const bySize = buildBookingRentalGroupsBySize(run.id, orderedIds, run, wlLocked, members);
+  const bookingRentalsByDate = mergeBookingRentalsByDate(bySize);
+
+  const coalitionIds = coalitionWaitlistedUserIdsFromRentals(bookingRentalsByDate, {
+    futureOnly: true,
+  });
+  const coalitionMembers = [...coalitionIds].map((uid) => {
+    const m = members.find((x) => Number(x.id) === uid);
+    return {
+      userId: uid,
+      name: m ? `${m.first_name} ${m.last_name}` : String(uid),
+      sizes: memberCoalitionRentalStatus(uid, bySize).waitlistedSizes,
+    };
+  });
+
+  let legacySlotTagWaitlistCount = 0;
+  const slotTagOnly = [];
+  for (const uid of orderedIds) {
+    const slots = memberSlotsFromRow(run.id, uid, includedWeekdays);
+    const countsBefore = slotCountsBeforeUserInSaveOrder(run.id, uid);
+    const tags = memberRentalStatusForSizes(slots, bySize, countsBefore);
+    if (tags.hourWaitlisted) legacySlotTagWaitlistCount++;
+    if (tags.hourWaitlisted && !coalitionIds.has(Number(uid))) {
+      const m = members.find((x) => Number(x.id) === Number(uid));
+      slotTagOnly.push({
+        userId: uid,
+        name: m ? `${m.first_name} ${m.last_name}` : String(uid),
+        waitlistedSizes: tags.waitlistedSizes,
+      });
+    }
+  }
+
+  print({
+    run: { id: run.id, title: run.title, memberCount: orderedIds.length },
+    coalitionWaitlistCount: coalitionIds.size,
+    legacySlotTagWaitlistCount,
+    coalitionMembers,
+    slotTagOnlyMembers: slotTagOnly,
+    note: "coalitionWaitlistCount is what the UI header should show after the fix",
+  });
+}
+
 const bookingMatch = /^booking(?::(.+))?$/i.exec(query);
 const waitlistMatch = /^waitlist(?::(.+))?$/i.exec(query);
+const waitlistCompareMatch = /^waitlist-compare(?::(.+))?$/i.exec(query);
+if (waitlistCompareMatch) {
+  await runWaitlistCompareQuery(waitlistCompareMatch[1] || "");
+  process.exit(0);
+}
 if (bookingMatch || waitlistMatch) {
   const arg = (bookingMatch || waitlistMatch)[1] || "";
   await runBookingQuery(arg, { waitlistOnly: !!waitlistMatch });

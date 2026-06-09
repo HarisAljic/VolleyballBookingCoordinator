@@ -18,7 +18,7 @@
     "kick:bench": "node server/kick-bench-waitlist-demo.mjs",
     "db:reset": "node server/reset-db.mjs",
     "db:query": "node scripts/railway-db-query.mjs",
-    "test": "node --test default-run-month.test.mjs booking-roster-waitlist.test.mjs booking-multi-date.test.mjs booking-waitlist-count.test.mjs",
+    "test": "node --test default-run-month.test.mjs booking-roster-waitlist.test.mjs booking-multi-date.test.mjs booking-waitlist-count.test.mjs booking-guest-count.test.mjs",
     "postinstall": "node -e \"if(process.env.SKIP_PLAYWRIGHT_INSTALL){process.exit(0)}\" && playwright install chromium"
   },
   "engines": {

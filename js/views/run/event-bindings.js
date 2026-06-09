@@ -14,6 +14,7 @@ import { skeddaVenueHref } from "../../lib/skedda.js";
 import { ROSTER_SIZES } from "../../../roster-tiers.js";
 import { saveVisibleRosterSizes } from "./roster-view.js";
 import { clearViewerSlotDraft } from "./viewer-slots.js";
+import { bindGuestModals } from "./guest-modals.js";
 import { bindMemberTiles } from "./members-panel.js";
 
 export function bindRunPageEvents(ctx, { renderRunPage, goHome }) {
@@ -37,6 +38,7 @@ export function bindRunPageEvents(ctx, { renderRunPage, goHome }) {
     slotsByUserId.set(Number(m.userId), m.slots || []);
   }
   const { refreshViewerTile } = bindMemberTiles({ run, selected, slotsByUserId });
+  bindGuestModals({ token, run, renderRunPage });
 
   const updateViewerAvailabilityUi = () => {
     refreshViewerTile();

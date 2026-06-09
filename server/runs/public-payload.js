@@ -24,6 +24,12 @@ import {
   schedulingWaitlistLocked,
 } from "./availability.js";
 import {
+  countGuestsWithAvailability,
+  formatGuestRow,
+  listGuestsForRun,
+  listGuestsBySponsor,
+} from "./guests.js";
+import {
   listMembers,
   memberCount,
   orderedMemberUserIds,
@@ -76,20 +82,31 @@ export function buildPublicRunPayload(run, user, { diag = false } = {}) {
 
   const full = activeCountForSize(orderedIds, cap) >= cap;
 
-  const memberAvailability = loadMemberAvailabilityHeatmap(
-    run.id,
-    orderedIds,
-    includedWeekdays
-  );
+  const guestRows = listGuestsForRun(run.id);
+  const guests = guestRows.map((row) => formatGuestRow(row, includedWeekdays));
+  const guestHeatmap = guests.map((g) => ({
+    userId: g.participantId,
+    guestId: g.id,
+    isGuest: true,
+    firstName: g.firstName,
+    lastName: g.lastName,
+    displayName: g.displayName,
+    sponsorUserId: g.sponsorUserId,
+    slots: g.slots,
+  }));
+
+  const memberAvailability = [
+    ...loadMemberAvailabilityHeatmap(run.id, orderedIds, includedWeekdays),
+    ...guestHeatmap,
+  ];
   const minTarget = Math.min(...rosterTargets);
   const membersWithAnySave = memberAvailability.filter((m) => (m.slots || []).length > 0).length;
   const runFound = membersWithAnySave >= minTarget;
 
   const countIdsForLock = wlLocked ? activeRosterUserIds(run.id, cap) : orderedIds;
-  const membersWithAvailability = countMembersWithAvailability(
-    run.id,
-    countIdsForLock
-  );
+  const membersWithAvailability =
+    countMembersWithAvailability(run.id, countIdsForLock) +
+    countGuestsWithAvailability(run.id, guestRows);
   const activeRosterCount = activeCountForSize(orderedIds, cap);
 
   const bookingRentalGroups = ROSTER_SIZES.flatMap((size) =>
@@ -105,6 +122,15 @@ export function buildPublicRunPayload(run, user, { diag = false } = {}) {
       hourWaitlisted: (tags.waitlistedSizes || []).length > 0,
     };
     memberRentalTags.set(uid, merged);
+  }
+  const guestRentalTags = new Map();
+  for (const g of guests) {
+    const tags = memberCoalitionRentalStatus(g.participantId, bookingRentalGroupsBySize);
+    guestRentalTags.set(g.id, {
+      ...tags,
+      waitlistedSizes: [...(tags.waitlistedSizes || [])].sort((a, b) => a - b),
+      hourWaitlisted: (tags.waitlistedSizes || []).length > 0,
+    });
   }
   const hourWaitlistCount = coalitionWaitlistedUserIdsFromRentals(
     bookingRentalsByDate,
@@ -156,6 +182,24 @@ export function buildPublicRunPayload(run, user, { diag = false } = {}) {
         fitsRental: tags.fitsRental,
       };
     }),
+    guests: guests.map((g) => {
+      const tags = guestRentalTags.get(g.id) || {
+        waitlistedSizes: [],
+        fitsSizes: [],
+        hourWaitlisted: false,
+        fitsRental: false,
+      };
+      return {
+        ...g,
+        waitlistedSizes: tags.waitlistedSizes,
+        fitsSizes: tags.fitsSizes,
+        waitlisted: tags.hourWaitlisted,
+        hourWaitlisted: tags.hourWaitlisted,
+        fitsRental: tags.fitsRental,
+      };
+    }),
+    viewerGuests:
+      mine && user ? listGuestsBySponsor(run.id, user.id).map((row) => formatGuestRow(row, includedWeekdays)) : [],
     viewerIsMember: mine,
     viewerIsActiveRoster: mine,
     viewerQueuedForRoster: Boolean(viewerTags?.hourWaitlisted),

@@ -3,6 +3,7 @@ import { computeDisplayLockCount } from "../../lib/dates.js";
 import { formatIncludedWeekdaysShort } from "../../../run-weekdays.js";
 import { renderBookingRentalsByDate } from "../../lib/overlap-ui.js";
 import { SKEDDA_VENUES, skeddaVenueHref } from "../../lib/skedda.js";
+import { renderViewerGuestButtons } from "./members-panel.js";
 
 export function renderRunPageHtml(ctx) {
   const {
@@ -59,14 +60,19 @@ export function renderRunPageHtml(ctx) {
       </details>
       <div class="mb-8 grid gap-6 lg:grid-cols-2">
         <div class="rounded-xl border border-slate-800 bg-slate-900/50 p-3">
-          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Members</h2>
+          <div class="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            <div class="flex flex-wrap items-center gap-2">
+              <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Members</h2>
+              ${renderViewerGuestButtons(run)}
+            </div>
+            <span class="text-xs text-slate-500">${run.memberCount} total</span>
+          </div>
           <div class="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm text-slate-400">
             <span>
               Locked:
               <strong id="avail-lock-counter" class="text-emerald-400">${computeDisplayLockCount(run, selected)}</strong>
               <span class="text-slate-500"> / ${rosterSz}</span>
             </span>
-            <span class="text-xs text-slate-500">${run.memberCount} total</span>
           </div>
           <div class="text-sm">${memberRows}</div>
         </div>

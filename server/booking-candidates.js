@@ -38,19 +38,28 @@ function slotsSetFromRow(slots_json) {
   }
 }
 
-/** Booking roster slots: map user_id -> Set of slot keys. */
+/** Booking roster slots: map participant id -> Set of slot keys (members + guests). */
 export function bookingRosterSlotSets(db, runId, rosterUserIdsOrdered) {
   const map = new Map();
-  const getRow = db.prepare(
+  const getMemberRow = db.prepare(
     "SELECT slots_json FROM availability WHERE run_id = ? AND user_id = ?"
   );
+  const getGuestRow = db.prepare(
+    "SELECT slots_json FROM run_guests WHERE run_id = ? AND id = ?"
+  );
   for (const uid of rosterUserIdsOrdered) {
-    const row = getRow.get(runId, uid);
-    if (!row) {
-      map.set(uid, new Set());
+    const n = Number(uid);
+    if (n < 0) {
+      const row = getGuestRow.get(runId, Math.abs(n));
+      map.set(n, row ? slotsSetFromRow(row.slots_json) : new Set());
       continue;
     }
-    map.set(uid, slotsSetFromRow(row.slots_json));
+    const row = getMemberRow.get(runId, n);
+    if (!row) {
+      map.set(n, new Set());
+      continue;
+    }
+    map.set(n, slotsSetFromRow(row.slots_json));
   }
   return map;
 }
@@ -110,11 +119,18 @@ export function coalitionRosterWaitlistForWindow(
   });
   const pick = (uid) => {
     const u = userInfoById.get(Number(uid)) || userInfoById.get(uid) || {};
-    return {
+    const out = {
       userId: Number(uid),
       firstName: u.firstName ?? "",
       lastName: u.lastName ?? "",
     };
+    if (u.displayName) out.displayName = u.displayName;
+    if (u.isGuest) {
+      out.isGuest = true;
+      if (u.guestId != null) out.guestId = u.guestId;
+      if (u.sponsorUserId != null) out.sponsorUserId = u.sponsorUserId;
+    }
+    return out;
   };
   const orderedIds = matching.map((m) => m.uid);
   const roster = orderedIds.slice(0, cap).map(pick);

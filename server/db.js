@@ -59,7 +59,21 @@ export function openDb() {
       PRIMARY KEY (run_id, user_id)
     );
 
+    CREATE TABLE IF NOT EXISTS run_guests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      sponsor_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL DEFAULT '',
+      slots_json TEXT NOT NULL DEFAULT '[]',
+      slot_saved_at_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_run_guests_run ON run_guests(run_id);
+    CREATE INDEX IF NOT EXISTS idx_run_guests_sponsor ON run_guests(run_id, sponsor_user_id);
     CREATE INDEX IF NOT EXISTS idx_runs_creator ON runs(creator_id);
     CREATE INDEX IF NOT EXISTS idx_runs_code ON runs(run_code);
     CREATE INDEX IF NOT EXISTS idx_runs_share ON runs(share_token);

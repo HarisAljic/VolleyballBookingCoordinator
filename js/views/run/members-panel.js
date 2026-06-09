@@ -50,8 +50,91 @@ function windowsForMember(m, { isViewer, selected, slotsByUserId }) {
   return formatMemberAvailabilityRanges(slotsLive);
 }
 
+function windowsForGuest(g, slotsByUserId) {
+  const pid = Number(g.participantId);
+  const slots = slotsByUserId.get(pid) || g.slots || [];
+  return formatMemberAvailabilityRanges(slots);
+}
+
 function encodeWindowsAttr(ranges) {
   return escapeHtml(JSON.stringify(ranges));
+}
+
+export function renderViewerGuestButtons(run) {
+  if (!run.viewerIsMember || run.viewerId == null || !run.viewerCanSetAvailability) return "";
+  return `<div class="flex flex-wrap items-center gap-1">
+      <button type="button" id="btn-add-guest" class="rounded border border-pink-600 bg-pink-600 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-pink-50 hover:bg-pink-500" title="Add a guest (+1)">Add +1</button>
+      ${
+        (run.viewerGuests || []).length > 0
+          ? `<button type="button" id="btn-manage-guests" class="rounded border border-pink-500/80 bg-pink-950/50 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-pink-200 hover:bg-pink-900/60" title="Manage your +1s">Manage +1s</button>`
+          : ""
+      }
+    </div>`;
+}
+
+function renderMemberTile(m, ctx) {
+  const { run, selected, slotsByUserId, idx } = ctx;
+  const mid = Number(m.id);
+  const isViewer =
+    run.viewerIsMember && run.viewerId != null && mid === Number(run.viewerId);
+  const ranges = windowsForMember(m, { isViewer, selected, slotsByUserId });
+  const fullName = `${m.firstName || ""} ${m.lastName || ""}`.trim() || "Member";
+  const hasSavedFuture = hasAnyFutureSlot(isViewer ? [...selected] : slotsByUserId.get(mid) || []);
+  const isWaitlisted = idx.waitlist.has(mid);
+  const isOnRoster = idx.roster.has(mid);
+  const dot = statusDotHtml({ isWaitlisted, hasSavedFuture, isOnRoster });
+
+  const stateCls = isOnRoster
+    ? "border-emerald-700/50 bg-emerald-950/35 text-emerald-50 hover:border-emerald-600/60 hover:bg-emerald-950/55"
+    : hasSavedFuture
+      ? "border-slate-700/80 bg-slate-950/40 text-slate-200 hover:border-slate-600 hover:bg-slate-900/80"
+      : "border-slate-700/80 bg-slate-950/50 text-slate-400 hover:border-slate-600 hover:bg-slate-900/80";
+
+  const viewerCls = isViewer ? "ring-2 ring-sky-500/50 ring-offset-1 ring-offset-slate-900" : "";
+
+  const emptyHint = isViewer
+    ? "No times selected yet — use the calendar below."
+    : "No availability saved.";
+
+  return `<button
+      type="button"
+      class="member-tile flex min-h-[3.5rem] w-full flex-col items-center justify-center rounded-lg border px-1.5 py-2 text-center transition focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50 ${stateCls} ${viewerCls}"
+      title="${escapeHtml(fullName)}"
+      data-user-id="${mid}"
+      data-member-name="${escapeHtml(fullName)}"
+      data-windows="${encodeWindowsAttr(ranges)}"
+      data-empty-hint="${escapeHtml(emptyHint)}"
+      aria-label="${escapeHtml(fullName)} availability"
+    >
+      <span class="member-tile-name w-full truncate text-[11px] font-medium leading-snug">${escapeHtml(fullName)}</span>
+      ${dot}
+    </button>`;
+}
+
+function renderGuestTile(g, ctx) {
+  const { slotsByUserId, idx } = ctx;
+  const pid = Number(g.participantId);
+  const ranges = windowsForGuest(g, slotsByUserId);
+  const fullName = g.displayName || `${g.firstName || ""} ${g.lastName || ""}`.trim() || "Guest +1";
+  const hasSavedFuture = hasAnyFutureSlot(g.slots || slotsByUserId.get(pid) || []);
+  const isWaitlisted = idx.waitlist.has(pid);
+  const isOnRoster = idx.roster.has(pid);
+  const dot = statusDotHtml({ isWaitlisted, hasSavedFuture, isOnRoster });
+
+  return `<button
+      type="button"
+      class="guest-tile member-tile flex min-h-[3.5rem] flex-col items-center justify-center rounded-lg border border-pink-400/60 bg-pink-900/25 px-1.5 py-2 text-center text-pink-50 transition hover:border-pink-400/70 hover:bg-pink-900/35 focus:outline-none focus-visible:ring-2 focus-visible:ring-pink-400/50"
+      title="${escapeHtml(fullName)}"
+      data-user-id="${pid}"
+      data-guest-id="${g.id}"
+      data-member-name="${escapeHtml(fullName)}"
+      data-windows="${encodeWindowsAttr(ranges)}"
+      data-empty-hint="No availability saved."
+      aria-label="${escapeHtml(fullName)} availability"
+    >
+      <span class="member-tile-name w-full truncate text-[11px] font-medium leading-snug">${escapeHtml(fullName)}</span>
+      ${dot}
+    </button>`;
 }
 
 export function renderMemberRows(
@@ -59,45 +142,11 @@ export function renderMemberRows(
   { selected, slotsByUserId, visibleRosterSizes, bookingRentalsByDate }
 ) {
   const idx = buildFutureRosterWaitlistIndex(bookingRentalsByDate, visibleRosterSizes);
-  const tiles = run.members
-    .map((m) => {
-      const mid = Number(m.id);
-      const isViewer =
-        run.viewerIsMember && run.viewerId != null && mid === Number(run.viewerId);
-      const ranges = windowsForMember(m, { isViewer, selected, slotsByUserId });
-      const fullName = `${m.firstName || ""} ${m.lastName || ""}`.trim() || "Member";
-      const hasSavedFuture = hasAnyFutureSlot(isViewer ? [...selected] : slotsByUserId.get(mid) || []);
-      const isWaitlisted = idx.waitlist.has(mid);
-      const isOnRoster = idx.roster.has(mid);
-      const dot = statusDotHtml({ isWaitlisted, hasSavedFuture, isOnRoster });
+  const ctx = { run, selected, slotsByUserId, idx };
 
-      const stateCls = isOnRoster
-        ? "border-emerald-700/50 bg-emerald-950/35 text-emerald-50 hover:border-emerald-600/60 hover:bg-emerald-950/55"
-        : hasSavedFuture
-          ? "border-slate-700/80 bg-slate-950/40 text-slate-200 hover:border-slate-600 hover:bg-slate-900/80"
-          : "border-slate-700/80 bg-slate-950/50 text-slate-400 hover:border-slate-600 hover:bg-slate-900/80";
-
-      const viewerCls = isViewer ? "ring-2 ring-sky-500/50 ring-offset-1 ring-offset-slate-900" : "";
-
-      const emptyHint = isViewer
-        ? "No times selected yet — use the calendar below."
-        : "No availability saved.";
-
-      return `<button
-          type="button"
-          class="member-tile flex min-h-[3.5rem] flex-col items-center justify-center rounded-lg border px-1.5 py-2 text-center transition focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50 ${stateCls} ${viewerCls}"
-          title="${escapeHtml(fullName)}"
-          data-user-id="${mid}"
-          data-member-name="${escapeHtml(fullName)}"
-          data-windows="${encodeWindowsAttr(ranges)}"
-          data-empty-hint="${escapeHtml(emptyHint)}"
-          aria-label="${escapeHtml(fullName)} availability"
-        >
-          <span class="member-tile-name w-full truncate text-[11px] font-medium leading-snug">${escapeHtml(fullName)}</span>
-          ${dot}
-        </button>`;
-    })
-    .join("");
+  const memberTiles = (run.members || []).map((m) => renderMemberTile(m, ctx)).join("");
+  const guestTiles = (run.guests || []).map((g) => renderGuestTile(g, ctx)).join("");
+  const tiles = memberTiles + guestTiles;
 
   return `<div id="members-tile-grid" class="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">${tiles}</div>
     <div id="member-avail-tooltip" class="pointer-events-none fixed z-50 hidden max-w-[16rem] rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-xs text-slate-200 shadow-xl" role="tooltip"></div>`;
@@ -132,6 +181,7 @@ function bindMemberTileDismissListeners(hideTip) {
       const t = e.target;
       const tip = document.getElementById("member-avail-tooltip");
       if (t instanceof Node && (pinned.contains(t) || tip?.contains(t))) return;
+      if (t instanceof HTMLElement && (t.id === "btn-add-guest" || t.id === "btn-manage-guests")) return;
       hideTip();
     },
     { capture: true, signal }
@@ -214,7 +264,7 @@ export function bindMemberTiles({ run, selected, slotsByUserId }) {
 
   const refreshViewerTile = () => {
     if (!run.viewerId) return;
-    const el = grid.querySelector(`.member-tile[data-user-id="${Number(run.viewerId)}"]`);
+    const el = grid.querySelector(`.member-tile[data-user-id="${Number(run.viewerId)}"]:not(.guest-tile)`);
     if (!(el instanceof HTMLElement)) return;
     const m = run.members.find((x) => Number(x.id) === Number(run.viewerId));
     if (!m) return;

@@ -31,6 +31,14 @@ import { buildPublicRunPayload } from "../runs/public-payload.js";
 import { parseDefaultRunCode } from "../../default-run-month.js";
 import { ensureUserInDefaultRunByCode } from "../runs/default-runs.js";
 import {
+  countGuestsWithAvailability,
+  createGuest,
+  deleteGuest,
+  formatGuestRow,
+  listGuestsBySponsor,
+  updateGuest,
+} from "../runs/guests.js";
+import {
   createRun,
   getRunByCode,
   getRunByShareToken,
@@ -222,6 +230,158 @@ export function registerRunRoutes(app) {
     res.json({ ok: true, ...result });
   });
 
+  app.get("/api/runs/public/:token/guests", requireAuth, (req, res) => {
+    const run = getRunByShareToken(req.params.token);
+    if (!run) {
+      res.status(404).json({ error: "Run not found." });
+      return;
+    }
+    if (!userInRun(run.id, req.user.id)) {
+      res.status(403).json({ error: "Join this run before managing guests." });
+      return;
+    }
+    const weekdays = runIncludedWeekdays(run);
+    const guests = listGuestsBySponsor(run.id, req.user.id).map((row) =>
+      formatGuestRow(row, weekdays)
+    );
+    res.json({ guests });
+  });
+
+  app.post("/api/runs/public/:token/guests", requireAuth, (req, res) => {
+    const run = getRunByShareToken(req.params.token);
+    if (!run) {
+      res.status(404).json({ error: "Run not found." });
+      return;
+    }
+    if (!userInRun(run.id, req.user.id)) {
+      res.status(403).json({ error: "Join this run before adding guests." });
+      return;
+    }
+    const { firstName, lastName, slots, mergeIntoGuestId } = req.body || {};
+    const weekdays = runIncludedWeekdays(run);
+    const slotsRaw = slots != null ? parseSlots({ slots }) : [];
+    if (slots != null && !slotsRaw) {
+      res.status(400).json({ error: "slots must be a string array." });
+      return;
+    }
+    const filtered =
+      slotsRaw && slotsRaw.length
+        ? filterSlotKeysByIncludedWeekdays(slotsRaw, weekdays)
+        : [];
+    let mergeId = undefined;
+    if (mergeIntoGuestId != null) {
+      mergeId = Number(mergeIntoGuestId);
+      if (!Number.isFinite(mergeId)) {
+        res.status(400).json({ error: "Invalid guest id." });
+        return;
+      }
+    }
+    const result = createGuest(run.id, req.user.id, {
+      firstName,
+      lastName,
+      slots: filtered,
+      mergeIntoGuestId: mergeId,
+    });
+    if (result.error) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    res.status(result.merged ? 200 : 201).json({
+      ok: true,
+      guest: result.guest,
+      count: result.count,
+      merged: Boolean(result.merged),
+    });
+  });
+
+  app.patch("/api/runs/public/:token/guests/:guestId", requireAuth, (req, res) => {
+    const run = getRunByShareToken(req.params.token);
+    if (!run) {
+      res.status(404).json({ error: "Run not found." });
+      return;
+    }
+    if (!userInRun(run.id, req.user.id)) {
+      res.status(403).json({ error: "Join this run before editing guests." });
+      return;
+    }
+    const guestId = Number(req.params.guestId);
+    if (!Number.isFinite(guestId)) {
+      res.status(400).json({ error: "Invalid guest id." });
+      return;
+    }
+    const weekdays = runIncludedWeekdays(run);
+    const { firstName, lastName, slots, appendSlots, removeSlots } = req.body || {};
+    let slotsPayload = undefined;
+    let appendPayload = undefined;
+    let removePayload = undefined;
+    if (slots != null) {
+      const slotsRaw = parseSlots({ slots });
+      if (!slotsRaw) {
+        res.status(400).json({ error: "slots must be a string array." });
+        return;
+      }
+      slotsPayload = filterSlotKeysByIncludedWeekdays(slotsRaw, weekdays);
+    }
+    if (appendSlots != null) {
+      const appendRaw = parseSlots({ slots: appendSlots });
+      if (!appendRaw) {
+        res.status(400).json({ error: "appendSlots must be a string array." });
+        return;
+      }
+      appendPayload = filterSlotKeysByIncludedWeekdays(appendRaw, weekdays);
+    }
+    if (removeSlots != null) {
+      const removeRaw = parseSlots({ slots: removeSlots });
+      if (!removeRaw) {
+        res.status(400).json({ error: "removeSlots must be a string array." });
+        return;
+      }
+      removePayload = filterSlotKeysByIncludedWeekdays(removeRaw, weekdays);
+    }
+    const result = updateGuest(run.id, req.user.id, guestId, {
+      firstName,
+      lastName,
+      slots: slotsPayload,
+      appendSlots: appendPayload,
+      removeSlots: removePayload,
+    });
+    if (result.error) {
+      res.status(result.error === "Guest not found." ? 404 : 400).json({
+        error: result.error,
+      });
+      return;
+    }
+    res.json({
+      ok: true,
+      deleted: Boolean(result.deleted),
+      guest: result.guest ?? null,
+      count: result.count,
+    });
+  });
+
+  app.delete("/api/runs/public/:token/guests/:guestId", requireAuth, (req, res) => {
+    const run = getRunByShareToken(req.params.token);
+    if (!run) {
+      res.status(404).json({ error: "Run not found." });
+      return;
+    }
+    if (!userInRun(run.id, req.user.id)) {
+      res.status(403).json({ error: "Join this run before removing guests." });
+      return;
+    }
+    const guestId = Number(req.params.guestId);
+    if (!Number.isFinite(guestId)) {
+      res.status(400).json({ error: "Invalid guest id." });
+      return;
+    }
+    const result = deleteGuest(run.id, req.user.id, guestId);
+    if (result.error) {
+      res.status(404).json({ error: result.error });
+      return;
+    }
+    res.json({ ok: true });
+  });
+
   app.put("/api/runs/public/:token/availability", requireAuth, (req, res) => {
     const run = getRunByShareToken(req.params.token);
     if (!run) {
@@ -253,10 +413,9 @@ export function registerRunRoutes(app) {
     const countIds = wlLocked
       ? activeRosterUserIds(run.id, cap)
       : orderedMemberUserIds(run.id);
-    const membersWithAvailability = countMembersWithAvailability(
-      run.id,
-      countIds
-    );
+    const membersWithAvailability =
+      countMembersWithAvailability(run.id, countIds) +
+      countGuestsWithAvailability(run.id);
 
     res.json({
       ok: true,

@@ -44,6 +44,7 @@ export function slotEndIsoForHours(slotStartIso, hours) {
 }
 
 function personName(p) {
+  if (p.displayName) return escapeHtml(p.displayName);
   return escapeHtml(`${p.firstName || ""} ${p.lastName || ""}`.trim() || "Member");
 }
 

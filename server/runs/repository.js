@@ -96,6 +96,10 @@ export function getRunByCode(code) {
 
 export function leaveRun(runRow, userId) {
   const txn = db.transaction(() => {
+    db.prepare("DELETE FROM run_guests WHERE run_id = ? AND sponsor_user_id = ?").run(
+      runRow.id,
+      userId
+    );
     db.prepare("DELETE FROM availability WHERE run_id = ? AND user_id = ?").run(
       runRow.id,
       userId

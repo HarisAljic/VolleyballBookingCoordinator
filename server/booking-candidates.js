@@ -137,7 +137,6 @@ export function computeBookingWindowCandidates(
     dateStartStr,
     dateEndStr,
     includedWeekdays = null,
-    maxResults = 40,
   }
 ) {
   /** Bookable only when every booking-roster seat is filled and clears the window. */
@@ -204,7 +203,6 @@ export function computeBookingWindowCandidates(
     if (b.durationHours !== a.durationHours) return b.durationHours - a.durationHours;
     return String(a.slotKeys[0] || "").localeCompare(String(b.slotKeys[0] || ""));
   });
-  list = list.slice(0, maxResults);
 
   return list.map((w) => ({
     slotKeys: w.slotKeys,
